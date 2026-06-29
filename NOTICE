@@ -1,0 +1,21 @@
+keycloak-biscuit-exchange
+Copyright 2026 keycloak-biscuit-exchange contributors
+
+This product includes software developed as a Keycloak provider extension.
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product bundles the following third-party software in its shaded JAR,
+relocated under fr.vado.keycloak.biscuit.shaded.* :
+
+  - biscuit-java (org.biscuitsec:biscuit)            — Apache-2.0
+  - Protocol Buffers / protobuf-java (com.google.protobuf) — BSD-3-Clause
+  - Gson (com.google.code.gson)                      — Apache-2.0
+  - RE2/J (com.google.re2j)                          — BSD-3-Clause
+  - Vavr (io.vavr)                                   — Apache-2.0
+  - EdDSA-Java (net.i2p.crypto:eddsa)                — CC0-1.0 (public domain)
+
+The following dependencies are provided by the Keycloak runtime and are NOT
+bundled (scope=provided): org.keycloak:*, jakarta.ws.rs:jakarta.ws.rs-api.
+
+Test-only dependencies (scope=test, not distributed): JUnit, Mockito,
+Jackson, Testcontainers.

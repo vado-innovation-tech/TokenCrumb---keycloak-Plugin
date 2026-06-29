@@ -1,0 +1,64 @@
+{
+  "realm": "biscuit-demo",
+  "enabled": true,
+  "displayName": "Biscuit Demo",
+  "accessTokenLifespan": 120,
+  "roles": {
+    "realm": [
+      { "name": "admin" },
+      { "name": "user" }
+    ],
+    "client": {
+      "demo-cli": [
+        { "name": "orders:read" }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "demo-cli",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "fullScopeAllowed": true,
+      "webOrigins": ["*"],
+      "protocolMappers": [
+        {
+          "name": "biscuit",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-biscuit-mapper",
+          "config": {
+            "biscuit.claim.name": "biscuit",
+            "biscuit.audience": "biscuitmcp://exado-gateway",
+            "biscuit.required.profile": "native",
+            "biscuit.extra.facts": "[{\"key\":\"tenant_id\",\"value\":\"exado\"}]",
+            "biscuit.derived.facts": "[{\"key\":\"agent_id\",\"value\":\"agent_id\"}]",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Demo",
+      "attributes": {
+        "agent_id": ["agent-alice-007"]
+      },
+      "credentials": [
+        { "type": "password", "value": "alice-password", "temporary": false }
+      ],
+      "realmRoles": ["admin", "user"],
+      "clientRoles": {
+        "demo-cli": ["orders:read"]
+      }
+    }
+  ]
+}

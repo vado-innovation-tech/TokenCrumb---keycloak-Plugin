@@ -1,0 +1,16 @@
+target/
+.idea/
+*.iml
+.DS_Store
+.mvn/wrapper/maven-wrapper.jar
+
+# Note de travail interne — ne pas publier
+retour_exterieur.md
+
+# Config locale Claude Code
+.claude/settings.local.json
+
+# Doc/présentation HTML générées — non publiées
+docs/
+presentation/
+

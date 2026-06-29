@@ -1,0 +1,18 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.7
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      BISCUIT_TOKEN_TTL: "300"
+      BISCUIT_KEY_STRATEGY: "auto"
+      # Décommenter pour chiffrer la seed persistée (AES-256-GCM) :
+      # BISCUIT_KEY_ENCRYPTION_KEY: "<64 caractères hex ou base64 de 32 octets>"
+    ports:
+      - "8080:8080"   # HTTP
+      - "9000:9000"   # management (health: http://localhost:9000/health/ready)
+    volumes:
+      - ./target/keycloak-biscuit-exchange.jar:/opt/keycloak/providers/keycloak-biscuit-exchange.jar:ro
+      - ./src/test/resources/biscuit-demo-realm.json:/opt/keycloak/data/import/biscuit-demo-realm.json:ro
