@@ -1,0 +1,32 @@
+TokenCrumb — Keycloak Plugin
+Copyright 2026 Antonin Alves
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product bundles the following third-party software in its shaded JAR.
+biscuit-java itself (org.biscuitsec.*, biscuit.format.schema) is not
+relocated; its dependencies are relocated under
+fr.vado.keycloak.biscuit.shaded.*:
+
+  - biscuit-java 4.0.1 (org.biscuitsec:biscuit)             — Apache-2.0
+  - Protocol Buffers 3.25.5 (com.google.protobuf:protobuf-java)
+      -> fr.vado.keycloak.biscuit.shaded.protobuf             — BSD-3-Clause
+  - Gson 2.8.9 (com.google.code.gson:gson)
+      -> fr.vado.keycloak.biscuit.shaded.gson                 — Apache-2.0
+  - RE2/J 1.6 (com.google.re2j:re2j)
+      -> fr.vado.keycloak.biscuit.shaded.re2j                 — BSD-3-Clause
+  - Vavr 0.10.3 (io.vavr:vavr)
+      -> fr.vado.keycloak.biscuit.shaded.vavr                 — Apache-2.0
+  - Vavr Match 0.10.3 (io.vavr:vavr-match)
+      -> fr.vado.keycloak.biscuit.shaded.vavr.match           — Apache-2.0
+  - EdDSA-Java 0.3.0 (net.i2p.crypto:eddsa)
+      -> fr.vado.keycloak.biscuit.shaded.i2pcrypto            — CC0-1.0
+
+The BSD-3-Clause license texts of Protocol Buffers and RE2/J are included in
+the JAR under META-INF/THIRD-PARTY-LICENSES/.
+
+The following dependencies are provided by the Keycloak runtime and are NOT
+bundled (scope=provided): org.keycloak:*, jakarta.ws.rs:jakarta.ws.rs-api.
+
+Test-only dependencies (scope=test, not distributed): JUnit, Mockito,
+Jackson, Testcontainers.

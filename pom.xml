@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>fr.vado.tokencrumb</groupId>
+  <artifactId>tokencrumb-keycloak-plugin</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>TokenCrumb — Keycloak Plugin</name>
+  <description>Keycloak extension issuing Biscuit capability tokens: JWT-to-Biscuit exchange endpoint and OIDC protocol mapper, with DPoP-anchored agent keys</description>
+  <url>https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>Als0m3</id>
+      <name>Antonin Alves</name>
+      <email>antonin@alors-la.fr</email>
+    </developer>
+  </developers>
+
+  <scm>
+    <url>https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin</url>
+    <connection>scm:git:https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin.git</connection>
+    <developerConnection>scm:git:git@github.com:vado-innovation-tech/TokenCrumb---keycloak-Plugin.git</developerConnection>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin/issues</url>
+  </issueManagement>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>17</maven.compiler.release>
+    <keycloak.version>26.4.7</keycloak.version>
+    <biscuit.version>4.0.1</biscuit.version>
+    <junit.version>5.11.4</junit.version>
+    <mockito.version>5.23.0</mockito.version>
+  </properties>
+
+  <dependencies>
+    <!-- Keycloak SPI: provided by the runtime, never bundled -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi-private</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-services</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-core</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.ws.rs</groupId>
+      <artifactId>jakarta.ws.rs-api</artifactId>
+      <version>3.1.0</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- biscuit-java: bundled in the shaded JAR with its dependencies relocated -->
+    <dependency>
+      <groupId>org.biscuitsec</groupId>
+      <artifactId>biscuit</artifactId>
+      <version>${biscuit.version}</version>
+    </dependency>
+
+    <!-- Tests -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.github.dasniko</groupId>
+      <artifactId>testcontainers-keycloak</artifactId>
+      <version>4.2.1</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- 2.19.4: fixes CVE-2025-52999 (2.17.2 was affected). Test scope, not bundled. -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.19.4</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>${mockito.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>tokencrumb-keycloak-plugin</finalName>
+    <!-- Default lifecycle plugins pinned for reproducible builds -->
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-clean-plugin</artifactId>
+          <version>3.5.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-resources-plugin</artifactId>
+          <version>3.4.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>3.14.1</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>3.5.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-install-plugin</artifactId>
+          <version>3.1.4</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+    <plugins>
+      <!-- Build guardrails: minimum Java/Maven versions -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>3.6.3</version>
+        <executions>
+          <execution>
+            <id>enforce-versions</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireMavenVersion>
+                  <version>3.6.3</version>
+                </requireMavenVersion>
+                <requireJavaVersion>
+                  <version>17</version>
+                </requireJavaVersion>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- CycloneDX SBOM of the shaded JAR (supply chain): target/tokencrumb-keycloak-plugin-sbom.{json,xml} -->
+      <plugin>
+        <groupId>org.cyclonedx</groupId>
+        <artifactId>cyclonedx-maven-plugin</artifactId>
+        <version>2.9.2</version>
+        <executions>
+          <execution>
+            <id>sbom</id>
+            <phase>package</phase>
+            <goals>
+              <goal>makeBom</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <outputName>${project.build.finalName}-sbom</outputName>
+          <!-- Only what the shaded JAR actually ships -->
+          <includeProvidedScope>false</includeProvidedScope>
+          <includeTestScope>false</includeTestScope>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.6</version>
+        <configuration>
+          <systemPropertyVariables>
+            <!-- Keycloak classes log through JBoss LogManager: select it before JUL initializes -->
+            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <version>3.5.6</version>
+        <configuration>
+          <systemPropertyVariables>
+            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+          </systemPropertyVariables>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.2</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>module-info.class</exclude>
+                    <exclude>META-INF/versions/*/module-info.class</exclude>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <!-- protobuf schema sources: not needed at runtime -->
+                    <exclude>**/*.proto</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <!-- Relocate biscuit-java's dependencies to avoid any conflict
+                   with Keycloak's Quarkus classpath. org.biscuitsec.* and
+                   biscuit.format.schema (generated protobuf classes) stay in place:
+                   their bytecode is rewritten to point at the relocated protobuf. -->
+              <relocations>
+                <relocation>
+                  <pattern>com.google.protobuf</pattern>
+                  <shadedPattern>fr.vado.keycloak.biscuit.shaded.protobuf</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>com.google.gson</pattern>
+                  <shadedPattern>fr.vado.keycloak.biscuit.shaded.gson</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>com.google.re2j</pattern>
+                  <shadedPattern>fr.vado.keycloak.biscuit.shaded.re2j</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>io.vavr</pattern>
+                  <shadedPattern>fr.vado.keycloak.biscuit.shaded.vavr</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>net.i2p.crypto</pattern>
+                  <shadedPattern>fr.vado.keycloak.biscuit.shaded.i2pcrypto</shadedPattern>
+                </relocation>
+              </relocations>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <!-- META-INF/LICENSE and META-INF/NOTICE are this project's files. Dependency LICENSE
+                     files are dropped (the Apache-2.0 text is ours; BSD-3-Clause texts are shipped under
+                     META-INF/THIRD-PARTY-LICENSES). No bundled dependency ships a NOTICE file: if one
+                     ever does, the build fails on the duplicate entry so that it gets merged by hand
+                     into NOTICE (ApacheNoticeResourceTransformer would add an incorrect ASF attribution). -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                  <resource>META-INF/LICENSE</resource>
+                  <file>LICENSE</file>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                  <resource>META-INF/NOTICE</resource>
+                  <file>NOTICE</file>
+                </transformer>
+              </transformers>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
