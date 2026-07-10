@@ -1,0 +1,28 @@
+# Local demo: Keycloak with the TokenCrumb provider and the biscuit-demo realm.
+# Build the JAR first: ./mvnw -DskipITs package
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.7
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      BISCUIT_TOKEN_TTL: "300"
+      BISCUIT_KEY_STRATEGY: "generated"
+      # Lets the first exchange generate the root key. Development only, on a single node.
+      BISCUIT_ALLOW_KEY_BOOTSTRAP: "true"
+      # A gateway rejects a mandate without an audience in the authority block (a missing
+      # audience means deny, never "any"): otherwise the mandate could be replayed against any
+      # deployment exposing the same tool name. The REST path sets none by default, so the demo
+      # declares one here.
+      BISCUIT_EXTRA_FACTS: >-
+        [{"name":"audience","values":["https://gateway.example"]}]
+      # Uncomment to encrypt the persisted seed (AES-256-GCM):
+      # BISCUIT_KEY_ENCRYPTION_KEY: "<64 hex characters or base64 of 32 bytes>"
+    ports:
+      - "8080:8080"   # HTTP
+      - "9000:9000"   # management (health: http://localhost:9000/health/ready)
+    volumes:
+      - ./target/tokencrumb-keycloak-plugin.jar:/opt/keycloak/providers/tokencrumb-keycloak-plugin.jar:ro
+      - ./src/test/resources/biscuit-demo-realm.json:/opt/keycloak/data/import/biscuit-demo-realm.json:ro
