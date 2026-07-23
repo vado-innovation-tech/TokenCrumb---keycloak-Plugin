@@ -1,0 +1,10 @@
+[project]
+name = "tokencrumb-keycloak-example"
+version = "0.1.0"
+description = "Client example: JWT → Biscuit exchange and offline verification"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "biscuit-python>=0.4.0",
+    "requests>=2.34.2",
+]
