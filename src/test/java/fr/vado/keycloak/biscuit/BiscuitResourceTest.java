@@ -31,7 +31,7 @@ class BiscuitResourceTest {
     void disabledExtensionReturns404OnAllEndpoints() {
         BiscuitConfig disabled = BiscuitConfig.from(Map.of("BISCUIT_ENABLED", "false"));
         BiscuitResource res = new BiscuitResource(session(null, null), disabled);
-        assertEquals(404, res.token().getStatus());
+        assertEquals(404, res.token(null).getStatus());
         assertEquals(404, res.publicKey().getStatus());
         assertEquals(404, res.tokenPreflight().getStatus());
         assertEquals(404, res.publicKeyPreflight().getStatus());

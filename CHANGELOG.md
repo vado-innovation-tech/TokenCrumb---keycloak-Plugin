@@ -6,6 +6,19 @@ Toutes les évolutions notables de `keycloak-biscuit-exchange`. Format inspiré 
 ## [Non publié]
 
 ### Ajouté
+- **Ancrage d'une clé d'agent (profil 3b)** : `POST /realms/{realm}/biscuit/token` accepte désormais un
+  corps JSON **facultatif** `{"agent_pubkey": "ed25519/<64 hex>"}` — sans corps, le comportement est
+  strictement inchangé. La clé est écrite dans le bloc *authority* et l'émission impose
+  `required_profile("hardened_biscuit_anchored")`. C'est la **seule** voie qui accepte `agent_pubkey`
+  (`BiscuitFacts.requested`), distincte de `validated()` (libre) et `governed()` (config de confiance) :
+  une clé posée en configuration vaudrait pour tous les échanges du realm, alors qu'une clé fournie par
+  un demandeur déjà authentifié ne fait que **restreindre** son propre mandat — les droits viennent
+  intégralement du JWT présenté (*proof-of-possession*, RFC 7800). Format validé strictement
+  (`ed25519/` + 64 hexadécimaux, normalisés en minuscules). Erreurs : `400 invalid_agent_pubkey` (clé
+  fournie mais mal formée ou non-string), `400 invalid_request` (JSON illisible, non-objet, champ
+  inconnu) — contrairement aux voies de config, une valeur invalide n'est **jamais** ignorée avec un
+  `WARN`, un `200` non ancré que l'appelant croirait de profil 3b étant pire qu'un refus.
+  Réf. ADR-0001 et ADR-0003 du dépôt `MCPproxy`.
 - **Faits dérivés d'attributs Keycloak** (champ mapper `Derived facts` / `biscuit.derived.facts`) :
   une map `nom de fait → nom d'attribut` dont la valeur est lue sur l'utilisateur (ou son
   service-account) à l'émission. Voie `BiscuitFacts.governed()` → autorise les faits **gouvernés**
@@ -35,6 +48,16 @@ Toutes les évolutions notables de `keycloak-biscuit-exchange`. Format inspiré 
   signature / ancrage externe restent Lot 3.
 
 ### Sécurité / durcissement
+- **L'ancrage écrase tout `required_profile` de configuration** (`BiscuitFacts.anchored`). Sans ce
+  retrait, un déployeur ayant configuré `required_profile("native")` produirait un mandat portant à la
+  fois une clé ancrée et l'autorisation de s'en passer : l'appelant ancrerait une clé puis présenterait
+  le mandat en profil 1, court-circuitant l'attestation. L'extension ouvrirait un contournement au lieu
+  de fermer un trou.
+- **Le mapper ne propose plus `hardened_biscuit_anchored`** dans sa liste *Required profile* (options :
+  `native` / `registry_backed`). Cette voie ne peut pas ancrer de clé — `agent_pubkey` reste refusé sur
+  toutes les voies de config — et le profil 3b exige une clé dans le bloc *authority* : les mandats
+  ainsi émis étaient refusés à chaque appel par la gateway (« profile downgrade »). Retirer l'option
+  n'efface pas une valeur **déjà enregistrée** dans un realm : vérifier les mappers existants.
 - **Faits réservés à deux niveaux** (`BiscuitFacts`) : les faits **cœur** (`user`, `client`, `issuer`,
   `realm_role`, `client_role`, `jti`, `time`, `key_id`, `agent_pubkey`, `max_delegation_depth`) sont
   refusés sur toutes les voies de config ; les faits **gouvernés** (`audience`, `required_profile`,
@@ -59,11 +82,19 @@ Toutes les évolutions notables de `keycloak-biscuit-exchange`. Format inspiré 
   `KC_SPI_*`) avec repli sur les variables d'environnement `BISCUIT_*`.
 
 ### Qualité / interne
+- `docker-compose.yml` déclare une `audience` via `BISCUIT_EXTRA_FACTS` : un vérificateur refuse tout
+  mandat sans `audience` dans le bloc *authority* (absente = DENY, jamais wildcard), et la voie REST
+  n'en posait aucune — les jetons de la stack de démo étaient inexploitables par une gateway.
 - Factorisation du code commun des endpoints (`guarded(...)`), `SecureRandom` partagé,
   copie défensive de la clé AES, constantes nommées, champ de config `volatile`.
 - Préflight `OPTIONS` aligné sur le gate `enabled` (404 si désactivé).
 
 ### Tests / build
+- `BiscuitAnchoringTest` (14 cas) : format et normalisation de `agent_pubkey`, réserve de config
+  toujours fermée sur `validated()`/`governed()`, profil imposé et `required_profile` de config écrasé,
+  autres faits de config conservés, et tous les refus du corps de requête (absent/vide/`null`,
+  non-string, champ inconnu, JSON illisible ou non-objet). Plus 5 tests d'intégration de bout en bout
+  dans `BiscuitExchangeIT` (ancrage réel, exchange sans corps toujours non ancré, `400` × 2, `401`).
 - Nouveaux tests unitaires : `BiscuitConfigTest`, `BiscuitKeyManagerTest`, `BiscuitResourceTest`
   (Mockito). Tests temporellement déterministes.
 - `jackson-databind` 2.17.2 → 2.19.4 (CVE-2025-52999, scope test).

@@ -57,7 +57,68 @@ public final class BiscuitFacts {
     static final Set<String> RESERVED_GOVERNED = Set.of(
             "audience", "required_profile", "agent_id", "principal_id", "rights_source", "spiffe_id");
 
+    /** Clé publique d'agent : {@code ed25519/} suivi de 64 caractères hexadécimaux. */
+    static final Pattern AGENT_PUBKEY = Pattern.compile("^ed25519/[0-9a-fA-F]{64}$");
+
+    /**
+     * Profil imposé dès qu'une clé d'agent est ancrée (ADR-0003 du dépôt {@code MCPproxy},
+     * {@code docs/adr/0003-demo-en-profil-3b-via-extension-du-spi-keycloak.md}).
+     */
+    static final String ANCHORED_PROFILE = "hardened_biscuit_anchored";
+
     private BiscuitFacts() {
+    }
+
+    /**
+     * Voie <strong>par requête</strong> : la seule qui accepte {@code agent_pubkey}, et elle
+     * n'accepte que lui.
+     *
+     * <p>La réserve inscrite dans {@link #RESERVED_CORE} visait la <em>configuration</em> : une clé
+     * d'agent posée en dur par un déployeur s'appliquerait à tous les échanges du realm, ce qui
+     * serait dangereux. Une clé fournie par un demandeur déjà authentifié est un canal différent, et
+     * l'ancrer ne fait que <strong>restreindre</strong> le mandat au détenteur de la clé privée
+     * correspondante : les droits, eux, viennent intégralement du JWT présenté. C'est le
+     * raisonnement du <em>proof-of-possession</em> de la RFC 7800.</p>
+     *
+     * <p>Contrairement à {@link #validated} et {@link #governed}, une valeur invalide n'est pas
+     * ignorée avec un {@code WARN} : le demandeur a explicitement demandé un ancrage, et lui rendre
+     * un mandat non ancré qu'il croirait de profil 3b serait pire qu'un refus. L'appelant traduit
+     * l'{@link Optional#empty()} en {@code 400}.</p>
+     */
+    public static Optional<BiscuitMinter.FactSpec> requested(String agentPubkey) {
+        if (agentPubkey == null || !AGENT_PUBKEY.matcher(agentPubkey).matches()) {
+            return Optional.empty();
+        }
+        // Normalisation en minuscules : deux orthographes de la même clé ne doivent pas produire
+        // deux mandats différents, et c'est la forme qu'émet le plan de contrôle côté proxy.
+        return Optional.of(new BiscuitMinter.FactSpec("agent_pubkey",
+                List.of(agentPubkey.toLowerCase(java.util.Locale.ROOT))));
+    }
+
+    /**
+     * Compose les faits d'un échange avec ancrage : les faits de configuration, moins tout
+     * {@code required_profile} qu'ils déclaraient, plus la clé ancrée et le profil imposé.
+     *
+     * <p>Le retrait n'est pas cosmétique. Sans lui, un déployeur ayant configuré
+     * {@code required_profile("native")} produirait un mandat portant à la fois une clé ancrée et
+     * l'autorisation de s'en passer : l'appelant ancrerait une clé puis présenterait le mandat en
+     * profil 1, court-circuitant l'attestation. L'extension ouvrirait un contournement au lieu de
+     * fermer un trou (ADR-0003 du dépôt {@code MCPproxy}).</p>
+     */
+    public static List<BiscuitMinter.FactSpec> anchored(List<BiscuitMinter.FactSpec> configured,
+                                                        BiscuitMinter.FactSpec agentPubkey) {
+        List<BiscuitMinter.FactSpec> out = new java.util.ArrayList<>();
+        for (BiscuitMinter.FactSpec fact : configured == null ? List.<BiscuitMinter.FactSpec>of() : configured) {
+            if ("required_profile".equals(fact.name())) {
+                LOG.debugf("Biscuit exchange: overriding configured required_profile '%s' "
+                        + "because an agent key is anchored", fact.values());
+                continue;
+            }
+            out.add(fact);
+        }
+        out.add(agentPubkey);
+        out.add(new BiscuitMinter.FactSpec("required_profile", List.of(ANCHORED_PROFILE)));
+        return List.copyOf(out);
     }
 
     /**

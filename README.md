@@ -81,6 +81,9 @@ L'extension s'enregistre sous `/realms/{realm}/biscuit`.
 
 - **Auth** : header `Authorization: Bearer <access_token Keycloak>`. Le JWT est validé par le
   mécanisme standard de Keycloak (signature, expiration, session utilisateur active) → `401` sinon.
+- **Corps** : facultatif. S'il est présent, il ne peut porter que `{"agent_pubkey": "ed25519/<64 hex>"}`,
+  qui **ancre** le mandat sur la clé de l'agent et impose le profil 3b (voir
+  [Ancrer une clé d'agent](#ancrer-une-clé-dagent-profil-3b)).
 - **Contenu du bloc authority du Biscuit émis** :
   - `user("<sub>")` — le sujet du JWT ;
   - `client("<azp>")` — le client pour lequel le JWT a été émis (omis si absent du JWT) ;
@@ -90,6 +93,9 @@ L'extension s'enregistre sous `/realms/{realm}/biscuit`.
     `resource_access.*.roles`, qualifié par l'id du client — realm et client ne sont plus confondus) ;
   - les éventuels **faits supplémentaires** déclarés via `BISCUIT_EXTRA_FACTS` (voir Configuration) —
     aucun par défaut : l'émetteur reste générique et ne produit que les faits ci-dessus ;
+  - si le corps a demandé un ancrage : `agent_pubkey("ed25519/…")` et
+    `required_profile("hardened_biscuit_anchored")`, qui **remplace** tout `required_profile` de
+    configuration ;
   - `key_id("<kid>")` — identifiant de la clé racine signataire (kid de la clé realm, ou empreinte de
     la clé générée) : permet la **rotation** et la **révocation par époque** côté vérificateur. Le même
     identifiant est exposé en `kid` par `GET /biscuit/public-key` ;
@@ -106,7 +112,8 @@ Chaque émission produit aussi une **ligne d'audit** `event=capability_issued` (
 ```
 
 - **Erreurs** : `401 {"error":"invalid_token"}` (JWT manquant/invalide/expiré/sans session),
-  `400 {"error":"invalid_request"}` (JWT sans claim `sub`),
+  `400 {"error":"invalid_request"}` (JWT sans claim `sub`, corps illisible/non-objet, champ inconnu),
+  `400 {"error":"invalid_agent_pubkey"}` (clé d'agent fournie mais mal formée),
   `503 {"error":"biscuit_unavailable"}` (clé racine indisponible),
   `500 {"error":"internal_error"}` (erreur inattendue — détail uniquement dans les logs serveur).
 
@@ -191,6 +198,50 @@ AuthorizerBuilder(
 ).build(token).authorize()
 ```
 
+### Ancrer une clé d'agent (profil 3b)
+
+`POST /realms/{realm}/biscuit/token` accepte un corps JSON **facultatif** portant une seule clé :
+
+```bash
+curl -s -X POST "$BASE/realms/biscuit-demo/biscuit/token" \
+  -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' \
+  -d '{"agent_pubkey": "ed25519/<64 hex>"}'
+```
+
+Le Biscuit émis porte alors `agent_pubkey("ed25519/…")` **et**
+`required_profile("hardened_biscuit_anchored")` — le profil est imposé par l'émetteur, et un
+`required_profile` déclaré en configuration est écarté pour l'occasion. Sans ce forçage, un
+appelant ancrerait une clé puis présenterait le mandat en profil 1, court-circuitant
+l'attestation : l'extension ouvrirait un contournement au lieu de fermer un trou.
+
+Ancrer une clé fournie par un demandeur déjà authentifié ne fait que **restreindre** le mandat au
+détenteur de la clé privée correspondante ; les droits, eux, viennent intégralement du JWT présenté
+(raisonnement *proof-of-possession* de la RFC 7800). L'émetteur valide seulement le format :
+`ed25519/` suivi de 64 caractères hexadécimaux, normalisés en minuscules.
+
+C'est la **seule** voie qui accepte `agent_pubkey` : posé en configuration, il vaudrait pour tous
+les échanges du realm, et il reste donc refusé sur toutes les voies de config (voir
+[Faits réservés](#faits-réservés-deux-niveaux)).
+
+Codes de retour :
+
+| Corps | Réponse |
+|---|---|
+| absent, vide, `{}`, ou `{"agent_pubkey": null}` | `200` **sans** ancrage — comportement historique inchangé |
+| `{"agent_pubkey": "ed25519/<64 hex>"}` | `200` ancré + profil imposé |
+| clé présente mais mal formée (ou non-string) | `400 invalid_agent_pubkey` |
+| JSON illisible, non-objet, ou champ inconnu | `400 invalid_request` |
+
+Une clé **fournie** n'est donc jamais ignorée en silence : le demandeur ne peut pas recevoir un
+`200` qu'il croirait de profil 3b alors que rien n'a été ancré.
+
+> Le vérificateur en aval refuse tout mandat sans `audience` dans le bloc d'autorité. Un jeton ancré
+> destiné à une gateway doit donc être émis avec `BISCUIT_EXTRA_FACTS` déclarant cette `audience`
+> (voir [Configuration](#configuration)).
+
+Décision de conception : `0003-demo-en-profil-3b-via-extension-du-spi-keycloak.md` du dépôt
+`MCPproxy` (ancrage réservé à l'émetteur : ADR-0001 du même dépôt).
+
 ## Émission via Protocol Mapper (config dans l'UI)
 
 En plus de l'endpoint REST, l'extension fournit un **Protocol Mapper** OIDC (« Biscuit Emitter »,
@@ -204,7 +255,7 @@ Keycloak. Son intérêt : la config se fait **par client, dans l'admin console**
 |---|---|
 | **Claim name** (défaut `biscuit`) | nom du claim JWT portant le Biscuit (base64url) |
 | **Audience** | si non vide → fait `audience("...")` |
-| **Required profile** (`native` / `hardened_biscuit_anchored`) | → fait `required_profile("...")` |
+| **Required profile** (`native` / `registry_backed`) | → fait `required_profile("...")`. Pas de `hardened_biscuit_anchored` ici : ce profil exige une clé d'agent ancrée, que cette voie ne peut pas poser — voir [Ancrer une clé d'agent](#ancrer-une-clé-dagent-profil-3b) |
 | **Extra facts** (éditeur clé→valeur) | faits custom `nom("valeur littérale")` ajoutés librement |
 | **Derived facts** (éditeur clé→valeur) | faits dérivés `nom → attribut Keycloak` : la valeur est **lue sur l'utilisateur** (ou son service-account) à l'émission |
 | **Add to access token / ID token** | où injecter le claim (access token par défaut) |
@@ -301,7 +352,10 @@ Pour protéger la sémantique de sécurité, deux ensembles de noms ne sont pas 
 - **Faits cœur** (`user`, `client`, `issuer`, `realm_role`, `client_role`, `jti`, `time`, `key_id`,
   `agent_pubkey`, `max_delegation_depth`) : frappés par le moteur (ou réservés pour le profil 3b /
   la chaîne de cautions, dérivés du modèle Keycloak — jamais d'une valeur fournie en config).
-  **Refusés sur toutes les voies.**
+  **Refusés sur toutes les voies de configuration.** Seule exception, et par un canal distinct :
+  `agent_pubkey` fourni **dans le corps d'une requête d'échange authentifiée** (voir
+  [Ancrer une clé d'agent](#ancrer-une-clé-dagent-profil-3b)) — une clé posée en config vaudrait pour
+  tous les échanges du realm, une clé fournie par le demandeur ne fait que restreindre son propre mandat.
 - **Faits gouvernés** (`audience`, `required_profile`, `agent_id`, `principal_id`, `rights_source`,
   `spiffe_id`) : sensibles (anti-downgrade, scoping, identité agent). Acceptés **uniquement par une
   voie dédiée** — champs nommés du mapper, ou `BISCUIT_EXTRA_FACTS` (déployeur) — **jamais** par la

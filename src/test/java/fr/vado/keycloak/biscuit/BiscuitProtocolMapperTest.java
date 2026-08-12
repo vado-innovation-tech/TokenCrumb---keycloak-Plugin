@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -133,6 +134,18 @@ class BiscuitProtocolMapperTest {
         assertTrue(names.contains(BiscuitProtocolMapper.DERIVED_FACTS), names.toString());
         // les cases "Add to access token / ID token" sont bien ajoutées par le helper Keycloak
         assertTrue(names.contains(OIDCAttributeMapperHelper.INCLUDE_IN_ACCESS_TOKEN), names.toString());
+    }
+
+    @Test
+    void theProfileListNeverOffersAProfileThisPathCannotHonour() {
+        // Cette voie ne peut pas ancrer de clé (agent_pubkey est RESERVED_CORE sur toute voie de
+        // config) : proposer hardened_biscuit_anchored ne produirait que des mandats refusés à
+        // chaque appel par la gateway (« profile downgrade »). Seul POST /biscuit/token y donne accès.
+        List<String> options = mapper.getConfigProperties().stream()
+                .filter(p -> BiscuitProtocolMapper.REQUIRED_PROFILE.equals(p.getName()))
+                .findFirst().orElseThrow().getOptions();
+        assertFalse(options.contains(BiscuitFacts.ANCHORED_PROFILE), options.toString());
+        assertEquals(List.of("native", "registry_backed"), options);
     }
 
     @Test

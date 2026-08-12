@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package fr.vado.keycloak.biscuit;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.OPTIONS;
@@ -19,6 +23,7 @@ import org.keycloak.services.managers.AuthenticationManager;
 
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -47,10 +52,25 @@ public class BiscuitResource {
         this.config = config;
     }
 
+    /**
+     * Échange un access token Keycloak contre un Biscuit.
+     *
+     * <p>Le corps est <strong>facultatif</strong> : sans lui, le comportement est celui d'avant, et
+     * un client existant qui poste sans rien n'est pas cassé. S'il est présent, il ne peut porter
+     * qu'une seule clé :</p>
+     *
+     * <pre>{@code {"agent_pubkey": "ed25519/<64 hex>"}}</pre>
+     *
+     * <p>Fournir cette clé demande un ancrage : le mandat émis est lié au détenteur de la clé privée
+     * correspondante, et l'émetteur impose alors {@code required_profile("hardened_biscuit_anchored")}
+     * (ADR-0003 du dépôt {@code MCPproxy} : l'ancrage doit forcer le profil, sinon il ouvre un
+     * contournement). Une clé mal formée, un corps illisible ou une clé inconnue dans l'objet sont des
+     * {@code 400} — jamais un échange silencieusement non ancré, que l'appelant croirait de profil 3b.</p>
+     */
     @POST
     @Path("token")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response token() {
+    public Response token(String body) {
         return guarded("Biscuit minting failed", () -> {
             RealmModel realm = session.getContext().getRealm();
 
@@ -66,11 +86,18 @@ public class BiscuitResource {
                         .header("WWW-Authenticate", "Bearer realm=\"" + realm.getName() + "\"")
                         .entity(Map.of("error", "invalid_token")));
             }
+            List<BiscuitMinter.FactSpec> facts;
+            try {
+                facts = factsFor(body);
+            } catch (InvalidRequestException e) {
+                return error(Response.Status.BAD_REQUEST, e.code());
+            }
+
             try {
                 BiscuitKeyManager.RootKey rootKey = BiscuitKeyManager.rootKey(session, realm, config);
                 BiscuitMinter.MintResult result =
                         BiscuitMinter.mint(auth.getToken(), rootKey.keyPair(), rootKey.keyId(),
-                                config.ttlSeconds(), Instant.now(), config.extraFacts());
+                                config.ttlSeconds(), Instant.now(), facts);
                 BiscuitAudit.logIssued("rest", realm.getName(), result.audit());
                 return withCors(Response.ok(Map.of(
                         "biscuit", result.biscuitB64(),
@@ -119,6 +146,68 @@ public class BiscuitResource {
             return error(Response.Status.NOT_FOUND, "not_found");
         }
         return withCors(Response.noContent());
+    }
+
+    /** Le corps de la requête est refusable : porte le code d'erreur rendu au client. */
+    static final class InvalidRequestException extends RuntimeException {
+        private final String code;
+
+        InvalidRequestException(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+
+        String code() {
+            return code;
+        }
+    }
+
+    /** Seule clé reconnue dans le corps ; toute autre est un refus, pas un silence. */
+    private static final String AGENT_PUBKEY_KEY = "agent_pubkey";
+
+    /**
+     * Faits à injecter pour cet échange : ceux de la configuration, éventuellement complétés par
+     * un ancrage demandé dans le corps.
+     *
+     * <p>Package-private et statique pour être testable sans monter un endpoint.</p>
+     */
+    static List<BiscuitMinter.FactSpec> factsFor(String body, List<BiscuitMinter.FactSpec> configured) {
+        if (body == null || body.isBlank()) {
+            return configured;
+        }
+        JsonObject obj;
+        try {
+            JsonElement parsed = JsonParser.parseString(body);
+            if (!parsed.isJsonObject()) {
+                throw new InvalidRequestException("invalid_request", "body is not a JSON object");
+            }
+            obj = parsed.getAsJsonObject();
+        } catch (JsonSyntaxException e) {
+            throw new InvalidRequestException("invalid_request", "body is not valid JSON");
+        }
+
+        // Une clé inconnue est refusée plutôt qu'ignorée : un appelant qui croit avoir demandé
+        // quelque chose et reçoit 200 sans l'avoir obtenu est le pire des deux mondes.
+        for (String key : obj.keySet()) {
+            if (!AGENT_PUBKEY_KEY.equals(key)) {
+                throw new InvalidRequestException("invalid_request", "unknown field: " + key);
+            }
+        }
+        JsonElement value = obj.get(AGENT_PUBKEY_KEY);
+        if (value == null || value.isJsonNull()) {
+            return configured;
+        }
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+            throw new InvalidRequestException("invalid_agent_pubkey", "agent_pubkey must be a string");
+        }
+        return BiscuitFacts.requested(value.getAsString())
+                .map(fact -> BiscuitFacts.anchored(configured, fact))
+                .orElseThrow(() -> new InvalidRequestException(
+                        "invalid_agent_pubkey", "agent_pubkey must be ed25519/<64 hex>"));
+    }
+
+    private List<BiscuitMinter.FactSpec> factsFor(String body) {
+        return factsFor(body, config.extraFacts());
     }
 
     private Response error(Response.Status status, String code) {

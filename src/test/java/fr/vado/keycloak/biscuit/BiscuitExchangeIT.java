@@ -74,9 +74,20 @@ class BiscuitExchangeIT {
     }
 
     private static HttpResponse<String> exchange(String authorizationHeader) throws Exception {
+        return exchange(authorizationHeader, null);
+    }
+
+    /** {@code body} null : requête sans corps, la forme historique, qui doit rester acceptée. */
+    private static HttpResponse<String> exchange(String authorizationHeader, String body)
+            throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl() + "/realms/" + REALM + "/biscuit/token"))
-                .POST(HttpRequest.BodyPublishers.noBody());
+                .POST(body == null
+                        ? HttpRequest.BodyPublishers.noBody()
+                        : HttpRequest.BodyPublishers.ofString(body));
+        if (body != null) {
+            request.header("Content-Type", "application/json");
+        }
         if (authorizationHeader != null) {
             request.header("Authorization", authorizationHeader);
         }
@@ -215,5 +226,59 @@ class BiscuitExchangeIT {
         HttpResponse<String> garbage = exchange("Bearer garbage");
         assertEquals(401, garbage.statusCode(), garbage.body());
         assertEquals("invalid_token", JSON.readTree(garbage.body()).get("error").asText());
+    }
+
+    // ------------------------------------------------------------------ //
+    // Ancrage d'une clé d'agent fournie par le demandeur (ADR-0003 du dépôt MCPproxy)
+    // ------------------------------------------------------------------ //
+    private static final String AGENT_PUBKEY = "ed25519/" + "ab".repeat(32);
+
+    @Test
+    void anchorsTheRequestedAgentKeyAndForcesTheHardenedProfile() throws Exception {
+        HttpResponse<String> response = exchange("Bearer " + passwordGrant(),
+                "{\"agent_pubkey\": \"" + AGENT_PUBKEY + "\"}");
+        assertEquals(200, response.statusCode(), response.body());
+
+        Biscuit biscuit = Biscuit.from_b64url(
+                JSON.readTree(response.body()).get("biscuit").asText(), fetchPublicKey());
+        String printed = biscuit.print();
+        assertTrue(printed.contains("agent_pubkey(\"" + AGENT_PUBKEY + "\")"), printed);
+        // Sans ce forçage, l'appelant ancre une clé puis présente le mandat en profil 1 et
+        // court-circuite l'attestation : l'extension ouvrirait un contournement.
+        assertTrue(printed.contains("required_profile(\"hardened_biscuit_anchored\")"), printed);
+        // Les droits restent ceux du JWT présenté : ancrer ne fait que restreindre.
+        assertTrue(printed.contains("realm_role(\"admin\")"), printed);
+    }
+
+    @Test
+    void anExchangeWithoutABodyIsStillNotAnchored() throws Exception {
+        HttpResponse<String> response = exchange("Bearer " + passwordGrant());
+        assertEquals(200, response.statusCode(), response.body());
+        String printed = Biscuit.from_b64url(
+                JSON.readTree(response.body()).get("biscuit").asText(), fetchPublicKey()).print();
+        assertFalse(printed.contains("agent_pubkey("), printed);
+    }
+
+    @Test
+    void aMalformedAgentKeyIs400() throws Exception {
+        HttpResponse<String> response =
+                exchange("Bearer " + passwordGrant(), "{\"agent_pubkey\": \"nope\"}");
+        assertEquals(400, response.statusCode(), response.body());
+        assertEquals("invalid_agent_pubkey", JSON.readTree(response.body()).get("error").asText());
+    }
+
+    @Test
+    void anUnknownBodyFieldIs400() throws Exception {
+        HttpResponse<String> response = exchange("Bearer " + passwordGrant(),
+                "{\"required_profile\": \"native\"}");
+        assertEquals(400, response.statusCode(), response.body());
+        assertEquals("invalid_request", JSON.readTree(response.body()).get("error").asText());
+    }
+
+    @Test
+    void anchoringStillRequiresAValidBearer() throws Exception {
+        HttpResponse<String> response =
+                exchange(null, "{\"agent_pubkey\": \"" + AGENT_PUBKEY + "\"}");
+        assertEquals(401, response.statusCode(), response.body());
     }
 }

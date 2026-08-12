@@ -73,8 +73,15 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
         profile.setName(REQUIRED_PROFILE);
         profile.setLabel("Required profile");
         profile.setType(ProviderConfigProperty.LIST_TYPE);
-        profile.setOptions(List.of("native", "hardened_biscuit_anchored"));
-        profile.setHelpText("Si défini, ajoute required_profile(\"...\") (anti-downgrade ; enforcé côté gateway).");
+        // Pas de hardened_biscuit_anchored ici : ce profil exige une clé d'agent ancrée dans le bloc
+        // d'autorité, et cette voie ne peut pas en ancrer (agent_pubkey est RESERVED_CORE sur toute
+        // voie de config). Le proposer ne produirait que des mandats refusés à chaque appel par la
+        // gateway (« profile downgrade »). Seul POST /biscuit/token avec agent_pubkey y donne accès.
+        profile.setOptions(List.of("native", "registry_backed"));
+        profile.setHelpText("Si défini, ajoute required_profile(\"...\") (anti-downgrade ; enforcé côté "
+                + "gateway). registry_backed suppose un agent_id (voir Derived facts) résoluble par le "
+                + "registre de la gateway. Le profil hardened_biscuit_anchored n'est atteignable que "
+                + "par POST /biscuit/token avec agent_pubkey : cette voie ne peut pas ancrer de clé.");
         CONFIG_PROPERTIES.add(profile);
 
         ProviderConfigProperty extra = new ProviderConfigProperty();
