@@ -29,14 +29,14 @@ import java.util.regex.Pattern;
  *
  * <p>Dans tous les cas : nom = prédicat Datalog valide, valeurs en littéraux string (l'insensibilité
  * à l'injection est garantie en aval par {@code Utils.string} dans {@link BiscuitMinter}), et un fait
- * refusé est simplement ignoré avec un {@code WARN} (l'émission n'échoue jamais).</p>
+ * refusé invalide la configuration d'émission dans les voies REST et mapper.</p>
  */
 public final class BiscuitFacts {
 
     private static final Logger LOG = Logger.getLogger(BiscuitFacts.class);
 
     /** Prédicat Datalog valide : minuscule initiale, puis alphanumérique/underscore. */
-    static final Pattern FACT_NAME = Pattern.compile("^[a-z][a-zA-Z0-9_]*$");
+    static final Pattern FACT_NAME = Pattern.compile("^[a-z][a-z0-9_]{0,63}$");
 
     /**
      * Faits frappés par le moteur (ou réservés Lot 3, dérivés du modèle Keycloak) : interdits sur
@@ -46,7 +46,8 @@ public final class BiscuitFacts {
      */
     static final Set<String> RESERVED_CORE = Set.of(
             "user", "client", "issuer", "realm_role", "client_role", "jti", "time",
-            "key_id", "agent_pubkey", "max_delegation_depth");
+            "key_id", "agent_pubkey", "max_delegation_depth", "expires_at", "operation", "upstream",
+            "resource", "budget", "delegation_depth", "arg", "call_signature_valid", "nonce_fresh", "arguments_bound", "capability_bound");
 
     /**
      * Faits sensibles à la sécurité, settables uniquement via leur champ dédié ({@link #governed}),
@@ -55,7 +56,7 @@ public final class BiscuitFacts {
      * fait libre.
      */
     static final Set<String> RESERVED_GOVERNED = Set.of(
-            "audience", "required_profile", "agent_id", "principal_id", "rights_source", "spiffe_id");
+            "audience", "required_profile", "agent_id", "principal_id", "rights_source", "spiffe_id", "budget_cap");
 
     /** Clé publique d'agent : {@code ed25519/} suivi de 64 caractères hexadécimaux. */
     static final Pattern AGENT_PUBKEY = Pattern.compile("^ed25519/[0-9a-fA-F]{64}$");
@@ -77,7 +78,7 @@ public final class BiscuitFacts {
      * d'agent posée en dur par un déployeur s'appliquerait à tous les échanges du realm, ce qui
      * serait dangereux. Une clé fournie par un demandeur déjà authentifié est un canal différent, et
      * l'ancrer ne fait que <strong>restreindre</strong> le mandat au détenteur de la clé privée
-     * correspondante : les droits, eux, viennent intégralement du JWT présenté. C'est le
+     * correspondante : les droits d'outils viennent de la correspondance de rôles configurée (ou du mode statique explicitement choisi). C'est le
      * raisonnement du <em>proof-of-possession</em> de la RFC 7800.</p>
      *
      * <p>Contrairement à {@link #validated} et {@link #governed}, une valeur invalide n'est pas
@@ -121,6 +122,12 @@ public final class BiscuitFacts {
         return List.copyOf(out);
     }
 
+    static void checkUnique(List<BiscuitMinter.FactSpec> facts) {
+        var seen = new java.util.HashSet<String>();
+        for (var f : facts) if ((RESERVED_GOVERNED.contains(f.name()) || f.name().equals("agent_pubkey"))
+                && !seen.add(f.name())) throw new IllegalArgumentException("duplicate governed fact: " + f.name());
+    }
+
     /**
      * Voie <strong>libre</strong> (map de faits per-client, {@code BISCUIT_EXTRA_FACTS} historique) :
      * rejette les noms cœur <em>et</em> gouvernés. À utiliser pour tout fait métier arbitraire.
@@ -141,8 +148,7 @@ public final class BiscuitFacts {
     /**
      * Valide un fait et le convertit en {@link BiscuitMinter.FactSpec}. Retourne
      * {@link Optional#empty()} (avec un {@code WARN}) si le nom est invalide, cœur, ou — quand
-     * {@code rejectGoverned} — gouverné, afin que l'émission n'échoue jamais à cause d'un fait mal
-     * déclaré.
+     * {@code rejectGoverned} — gouverné, l'appelant doit refuser l'émission lorsqu'une validation échoue.
      */
     private static Optional<BiscuitMinter.FactSpec> validate(String name, List<String> values,
                                                              boolean rejectGoverned) {
@@ -159,6 +165,17 @@ public final class BiscuitFacts {
                     + "set it through its dedicated field instead", name);
             return Optional.empty();
         }
-        return Optional.of(new BiscuitMinter.FactSpec(name, values == null ? List.of() : values));
+        if (values == null || values.isEmpty() || values.size() > 16 || values.stream().anyMatch(v ->
+                v == null || v.isBlank() || !v.equals(v.trim()) || v.length() > 4096 || v.chars().anyMatch(c -> c < 32)))
+            return Optional.empty();
+        if (RESERVED_GOVERNED.contains(name) && values.size() != 1) return Optional.empty();
+        if (name.equals("right") && values.size() != 2) return Optional.empty();
+        if (name.equals("required_profile") && !Set.of("native", "registry_backed", ANCHORED_PROFILE).contains(values.get(0)))
+            return Optional.empty();
+        if (name.equals("budget_cap")) {
+            try { if (!values.get(0).matches("[0-9]+") || Long.parseLong(values.get(0)) > 9007199254740991L) return Optional.empty(); }
+            catch (NumberFormatException e) { return Optional.empty(); }
+        }
+        return Optional.of(new BiscuitMinter.FactSpec(name, values));
     }
 }

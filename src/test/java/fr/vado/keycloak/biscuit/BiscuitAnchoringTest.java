@@ -122,9 +122,9 @@ class BiscuitAnchoringTest {
     }
 
     @Test
-    void aNullAgentPubkeyIsTreatedAsNoAnchoring() {
+    void aNullAgentPubkeyIsRefused() {
         List<BiscuitMinter.FactSpec> configured = List.of();
-        assertSame(configured, BiscuitResource.factsFor("{\"agent_pubkey\": null}", configured));
+        assertThrows(BiscuitResource.InvalidRequestException.class, () -> BiscuitResource.factsFor("{\"agent_pubkey\": null}", configured));
     }
 
     @Test

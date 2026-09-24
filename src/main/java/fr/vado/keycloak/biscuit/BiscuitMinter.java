@@ -107,15 +107,35 @@ public final class BiscuitMinter {
      */
     public static MintResult mint(AccessToken token, KeyPair rootKey, String keyId, long ttlSeconds,
                                   Instant now, List<FactSpec> extraFacts) throws Error {
+        if (ttlSeconds <= 0 || ttlSeconds > BiscuitConfig.MAX_TTL_SECONDS) throw new IllegalArgumentException("invalid TTL");
+        extraFacts = new java.util.ArrayList<>(extraFacts == null ? List.of() : extraFacts);
+        BiscuitFacts.checkUnique(extraFacts);
+        for (var f : extraFacts) {
+            boolean valid = f.name().equals("agent_pubkey") ? (f.values().size() == 1 && BiscuitFacts.requested(f.values().get(0)).isPresent())
+                    : BiscuitFacts.governed(f.name(), f.values()).isPresent();
+            if (!valid) throw new IllegalArgumentException("invalid authority fact");
+        }
+        if (extraFacts.stream().noneMatch(f -> f.name().equals("required_profile")))
+            extraFacts.add(new FactSpec("required_profile", List.of("native")));
+        if (extraFacts.stream().anyMatch(f -> f.name().equals("agent_pubkey"))
+                && !BiscuitFacts.ANCHORED_PROFILE.equals(firstValue(extraFacts, "required_profile")))
+            throw new IllegalArgumentException("anchored key requires anchored profile");
         String sub = token.getSubject();
         if (sub == null || sub.isBlank()) {
             throw new MissingSubjectException();
         }
 
+        if (sub.length() > 256 || !sub.equals(sub.trim()) || sub.chars().anyMatch(c -> c < 32))
+            throw new IllegalArgumentException("invalid subject");
+        long roleCount = realmRoles(token).size();
+        if (token.getResourceAccess() != null) for (var access : token.getResourceAccess().values())
+            if (access != null && access.getRoles() != null) roleCount += access.getRoles().size();
+        if (roleCount > 128 || extraFacts.size() > 128) throw new IllegalArgumentException("authority fact limit exceeded");
         long jwtExp = (token.getExp() != null && token.getExp() > 0) ? token.getExp() : Long.MAX_VALUE;
         long ttlExp = saturatedAdd(now.getEpochSecond(), ttlSeconds);
         long exp = Math.min(Math.min(jwtExp, ttlExp), MAX_EXP_EPOCH_SECONDS);
 
+        if (exp <= now.getEpochSecond()) throw new IllegalArgumentException("expired access token");
         org.biscuitsec.biscuit.token.builder.Biscuit builder =
                 Biscuit.builder(RNG, rootKey);
 
@@ -152,8 +172,8 @@ public final class BiscuitMinter {
         // (Utils.string) comme les faits JWT, donc insensibles à toute injection datalog.
         if (extraFacts != null) {
             for (FactSpec fact : extraFacts) {
-                builder.add_authority_fact(Utils.fact(fact.name(),
-                        fact.values().stream().map(Utils::string).toList()));
+                if (fact.name().equals("budget_cap")) builder.add_authority_fact("budget_cap(" + Long.parseLong(fact.values().get(0)) + ")");
+                else builder.add_authority_fact(Utils.fact(fact.name(), fact.values().stream().map(Utils::string).toList()));
             }
         }
 
@@ -165,12 +185,15 @@ public final class BiscuitMinter {
         String jti = UUID.randomUUID().toString();
         builder.add_authority_fact(Utils.fact("jti", List.of(Utils.string(jti))));
 
+        builder.add_authority_fact("expires_at(" + DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochSecond(exp)) + ")");
         builder.add_authority_check("check if time($t), $t < "
                 + DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochSecond(exp)));
 
         Audit audit = new Audit(jti, keyId, sub, issuer,
                 firstValue(extraFacts, "audience"), firstValue(extraFacts, "required_profile"), exp);
-        return new MintResult(builder.build().serialize_b64url(), exp, audit);
+        String encoded = builder.build().serialize_b64url();
+        if (encoded.length() > 16384) throw new IllegalArgumentException("minted token exceeds gateway size contract");
+        return new MintResult(encoded, exp, audit);
     }
 
     /** Première valeur du fait nommé {@code name} parmi les faits supplémentaires, ou {@code null}. */

@@ -82,13 +82,14 @@ public class BiscuitResource {
                 auth = null;
             }
             if (auth == null) {
+                BiscuitAudit.logDenied("rest", "invalid_token");
                 return withCors(Response.status(Response.Status.UNAUTHORIZED)
                         .header("WWW-Authenticate", "Bearer realm=\"" + realm.getName() + "\"")
                         .entity(Map.of("error", "invalid_token")));
             }
             List<BiscuitMinter.FactSpec> facts;
             try {
-                facts = factsFor(body);
+                facts = config.authorizedFacts(auth.getToken(), factsFor(body));
             } catch (InvalidRequestException e) {
                 return error(Response.Status.BAD_REQUEST, e.code());
             }
@@ -177,12 +178,12 @@ public class BiscuitResource {
         }
         JsonObject obj;
         try {
-            JsonElement parsed = JsonParser.parseString(body);
+            JsonElement parsed = StrictJson.parse(body);
             if (!parsed.isJsonObject()) {
                 throw new InvalidRequestException("invalid_request", "body is not a JSON object");
             }
             obj = parsed.getAsJsonObject();
-        } catch (JsonSyntaxException e) {
+        } catch (IllegalArgumentException e) {
             throw new InvalidRequestException("invalid_request", "body is not valid JSON");
         }
 
@@ -194,7 +195,7 @@ public class BiscuitResource {
             }
         }
         JsonElement value = obj.get(AGENT_PUBKEY_KEY);
-        if (value == null || value.isJsonNull()) {
+        if (value == null) {
             return configured;
         }
         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
@@ -211,6 +212,7 @@ public class BiscuitResource {
     }
 
     private Response error(Response.Status status, String code) {
+        BiscuitAudit.logDenied("rest", code);
         return withCors(Response.status(status).entity(Map.of("error", code)));
     }
 

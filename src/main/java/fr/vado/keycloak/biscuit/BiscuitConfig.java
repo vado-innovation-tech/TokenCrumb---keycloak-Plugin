@@ -21,7 +21,7 @@ import java.util.Map;
  * <ul>
  *   <li>{@code BISCUIT_ENABLED} (défaut {@code true})</li>
  *   <li>{@code BISCUIT_TOKEN_TTL} en secondes (défaut {@code 300})</li>
- *   <li>{@code BISCUIT_KEY_STRATEGY} : {@code auto} | {@code realm} | {@code generated} (défaut {@code auto})</li>
+ *   <li>{@code BISCUIT_KEY_STRATEGY} : {@code auto} | {@code realm} | {@code generated} (défaut {@code generated})</li>
  *   <li>{@code BISCUIT_KEY_ENCRYPTION_KEY} : clé AES-256 (64 hex ou base64 de 32 octets), optionnelle</li>
  * </ul>
  */
@@ -43,6 +43,14 @@ public final class BiscuitConfig {
     private final byte[] encryptionKey;
     private final boolean encryptionKeyInvalid;
     private final List<BiscuitMinter.FactSpec> extraFacts;
+    private List<RoleRights.Grant> roleRights = List.of();
+    private boolean staticRights;
+    private boolean bootstrap;
+    public boolean bootstrap() { return bootstrap; }
+    public List<BiscuitMinter.FactSpec> authorizedFacts(org.keycloak.representations.AccessToken token,
+                                                      List<BiscuitMinter.FactSpec> configured) {
+        return RoleRights.apply(token, configured, roleRights, staticRights);
+    }
 
     private BiscuitConfig(boolean enabled, long ttlSeconds, KeyStrategy keyStrategy, String realmKeyKid,
                           byte[] encryptionKey, boolean encryptionKeyInvalid,
@@ -74,13 +82,16 @@ public final class BiscuitConfig {
         merged.put("BISCUIT_REALM_KEY_KID", resolve(scope, "realm-key-kid", env, "BISCUIT_REALM_KEY_KID"));
         merged.put("BISCUIT_KEY_ENCRYPTION_KEY", resolve(scope, "key-encryption-key", env, "BISCUIT_KEY_ENCRYPTION_KEY"));
         merged.put("BISCUIT_EXTRA_FACTS", resolve(scope, "extra-facts", env, "BISCUIT_EXTRA_FACTS"));
+        merged.put("BISCUIT_ROLE_RIGHTS", resolve(scope, "role-rights", env, "BISCUIT_ROLE_RIGHTS"));
+        merged.put("BISCUIT_RIGHTS_MODE", resolve(scope, "rights-mode", env, "BISCUIT_RIGHTS_MODE"));
+        merged.put("BISCUIT_ALLOW_KEY_BOOTSTRAP", resolve(scope, "allow-key-bootstrap", env, "BISCUIT_ALLOW_KEY_BOOTSTRAP"));
         return from(merged);
     }
 
     /** Valeur du Config.Scope si présente et non blanche, sinon variable d'environnement. */
     private static String resolve(Config.Scope scope, String scopeKey, Map<String, String> env, String envVar) {
         String v = scope != null ? scope.get(scopeKey) : null;
-        return (v != null && !v.isBlank()) ? v : env.get(envVar);
+        return v != null ? v : env.get(envVar);
     }
 
     static BiscuitConfig from(Map<String, String> env) {
@@ -92,57 +103,40 @@ public final class BiscuitConfig {
         byte[] kek = null;
         boolean kekInvalid = false;
         String rawKek = env.get("BISCUIT_KEY_ENCRYPTION_KEY");
-        if (rawKek != null && !rawKek.isBlank()) {
+        if (rawKek != null) {
             kek = parseKek(rawKek.trim());
             if (kek == null) {
-                kekInvalid = true;
-                LOG.error("BISCUIT_KEY_ENCRYPTION_KEY is set but malformed (expected 64 hex chars or "
-                        + "base64 of 32 bytes); refusing to persist any NEW root key until fixed");
+                throw new IllegalArgumentException("BISCUIT_KEY_ENCRYPTION_KEY must encode 32 bytes");
             }
         }
         List<BiscuitMinter.FactSpec> extraFacts = parseExtraFacts(env.get("BISCUIT_EXTRA_FACTS"));
-        return new BiscuitConfig(enabled, ttl, strategy, realmKeyKid, kek, kekInvalid, extraFacts);
+        BiscuitConfig result = new BiscuitConfig(enabled, ttl, strategy, realmKeyKid, kek, kekInvalid, extraFacts);
+        result.roleRights = RoleRights.parse(env.get("BISCUIT_ROLE_RIGHTS"));
+        String mode = env.getOrDefault("BISCUIT_RIGHTS_MODE", "roles");
+        if (mode == null) mode = "roles";
+        if (!mode.equals("roles") && !mode.equals("static")) throw new IllegalArgumentException("unknown rights mode");
+        result.staticRights = mode.equals("static");
+        String bootstrap = env.get("BISCUIT_ALLOW_KEY_BOOTSTRAP");
+        result.bootstrap = bootstrap != null && parseEnabled(bootstrap);
+        return result;
     }
 
     private static boolean parseEnabled(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return true;
-        }
-        String v = raw.trim().toLowerCase(Locale.ROOT);
-        return !(v.equals("false") || v.equals("0") || v.equals("no") || v.equals("off"));
+        if (raw == null) return true;
+        return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+            case "true", "1", "yes", "on" -> true;
+            case "false", "0", "no", "off" -> false;
+            default -> throw new IllegalArgumentException("invalid boolean configuration");
+        };
     }
-
     private static long parseTtl(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return DEFAULT_TTL_SECONDS;
-        }
-        try {
-            long ttl = Long.parseLong(raw.trim());
-            if (ttl <= 0) {
-                LOG.warnf("BISCUIT_TOKEN_TTL=%s is not a positive number, using default %d", raw, DEFAULT_TTL_SECONDS);
-                return DEFAULT_TTL_SECONDS;
-            }
-            if (ttl > MAX_TTL_SECONDS) {
-                LOG.warnf("BISCUIT_TOKEN_TTL=%s exceeds the maximum of %d seconds, clamping", raw, MAX_TTL_SECONDS);
-                return MAX_TTL_SECONDS;
-            }
-            return ttl;
-        } catch (NumberFormatException e) {
-            LOG.warnf("BISCUIT_TOKEN_TTL=%s is not a number, using default %d", raw, DEFAULT_TTL_SECONDS);
-            return DEFAULT_TTL_SECONDS;
-        }
+        if (raw == null) return DEFAULT_TTL_SECONDS;
+        long value = Long.parseLong(raw.trim());
+        if (value <= 0 || value > MAX_TTL_SECONDS) throw new IllegalArgumentException("TTL outside supported range");
+        return value;
     }
-
     private static KeyStrategy parseStrategy(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return KeyStrategy.AUTO;
-        }
-        try {
-            return KeyStrategy.valueOf(raw.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            LOG.warnf("BISCUIT_KEY_STRATEGY=%s is unknown (expected auto|realm|generated), using auto", raw);
-            return KeyStrategy.AUTO;
-        }
+        return raw == null ? KeyStrategy.GENERATED : KeyStrategy.valueOf(raw.trim().toUpperCase(Locale.ROOT));
     }
 
     /** kid (trim) de la clé EdDSA du realm à dédier au Biscuit, ou null si non défini/blanc. */
@@ -167,68 +161,31 @@ public final class BiscuitConfig {
         }
     }
 
-    /**
-     * Parse {@code BISCUIT_EXTRA_FACTS} : un tableau JSON d'objets {@code {"name": ..., "values": [...]}}.
-     * Émetteur générique : aucune sémantique n'est imposée, seuls la validité du nom et les noms
-     * réservés sont contrôlés. Tout fait invalide est ignoré (WARN) ; un JSON illisible donne une
-     * liste vide — l'émission ne doit jamais échouer à cause de la config de faits.
-     */
+    /** Parse la configuration de faits : schéma, types et unicité stricts.
+     * Une erreur refuse la configuration complète, sans disparition silencieuse de contrainte. */
     static List<BiscuitMinter.FactSpec> parseExtraFacts(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return List.of();
-        }
+        if (raw == null) return List.of();
+        JsonElement root = StrictJson.parse(raw);
+        if (!root.isJsonArray()) throw new IllegalArgumentException("extra facts must be an array");
         List<BiscuitMinter.FactSpec> facts = new ArrayList<>();
-        try {
-            JsonElement root = JsonParser.parseString(raw);
-            if (!root.isJsonArray()) {
-                LOG.warnf("BISCUIT_EXTRA_FACTS must be a JSON array, ignoring (got: %s)",
-                        root.getClass().getSimpleName());
-                return List.of();
+        for (JsonElement e : root.getAsJsonArray()) {
+            if (!e.isJsonObject()) throw new IllegalArgumentException("fact must be an object");
+            JsonObject o = e.getAsJsonObject();
+            if (!o.keySet().equals(java.util.Set.of("name", "values")) || !o.get("name").isJsonPrimitive()
+                    || !o.getAsJsonPrimitive("name").isString() || !o.get("values").isJsonArray())
+                throw new IllegalArgumentException("invalid fact schema");
+            String name = o.get("name").getAsString();
+            List<String> values = new ArrayList<>();
+            for (JsonElement value : o.getAsJsonArray("values")) {
+                if (!value.isJsonPrimitive() || (!name.equals("budget_cap") && !value.getAsJsonPrimitive().isString())
+                        || (name.equals("budget_cap") && !value.getAsJsonPrimitive().isNumber()))
+                    throw new IllegalArgumentException("invalid fact value type");
+                values.add(value.getAsString());
             }
-            for (JsonElement element : root.getAsJsonArray()) {
-                BiscuitMinter.FactSpec fact = parseFact(element);
-                if (fact != null) {
-                    facts.add(fact);
-                }
-            }
-        } catch (RuntimeException e) {
-            LOG.warnf("BISCUIT_EXTRA_FACTS is not valid JSON, ignoring all extra facts: %s", e.getMessage());
-            return List.of();
+            facts.add(BiscuitFacts.governed(name, values).orElseThrow(() -> new IllegalArgumentException("invalid fact")));
         }
-        return facts;
-    }
-
-    /** Valide et convertit un élément du tableau en fait ; null (avec WARN) si invalide. */
-    private static BiscuitMinter.FactSpec parseFact(JsonElement element) {
-        if (!element.isJsonObject()) {
-            LOG.warnf("BISCUIT_EXTRA_FACTS: skipping non-object entry %s", element);
-            return null;
-        }
-        JsonObject obj = element.getAsJsonObject();
-        JsonElement nameEl = obj.get("name");
-        if (nameEl == null || !nameEl.isJsonPrimitive()) {
-            LOG.warnf("BISCUIT_EXTRA_FACTS: skipping entry without a string 'name': %s", obj);
-            return null;
-        }
-        String name = nameEl.getAsString();
-        List<String> values = new ArrayList<>();
-        JsonElement valuesEl = obj.get("values");
-        if (valuesEl != null) {
-            if (!valuesEl.isJsonArray()) {
-                LOG.warnf("BISCUIT_EXTRA_FACTS: 'values' must be an array for fact '%s', skipping", name);
-                return null;
-            }
-            for (JsonElement v : valuesEl.getAsJsonArray()) {
-                if (!v.isJsonPrimitive()) {
-                    LOG.warnf("BISCUIT_EXTRA_FACTS: skipping fact '%s' with non-scalar value %s", name, v);
-                    return null;
-                }
-                values.add(v.getAsString());
-            }
-        }
-        // BISCUIT_EXTRA_FACTS est une config déployeur de confiance (env/SPI lue au démarrage) :
-        // voie gouvernée, elle peut poser audience/required_profile mais jamais un fait cœur.
-        return BiscuitFacts.governed(name, values).orElse(null);
+        BiscuitFacts.checkUnique(facts);
+        return List.copyOf(facts);
     }
 
     public boolean enabled() {

@@ -5,6 +5,31 @@ Toutes les évolutions notables de `keycloak-biscuit-exchange`. Format inspiré 
 
 ## [Non publié]
 
+### Durcissement — corrections de l'audit du 9 septembre 2026 (rupture)
+- **Table rôle → droits** (`BISCUIT_ROLE_RIGHTS`, classe `RoleRights`) : `right("<tool>","<op>")` n'est
+  émis que pour les rôles du JWT explicitement associés ; aucun droit par défaut. Fait
+  `rights_source("jwt_roles")`, ou `rights_source("static_deployer")` en mode `BISCUIT_RIGHTS_MODE=static`.
+  Appliquée sur les voies REST et mapper.
+- **Configuration stricte** : `BISCUIT_EXTRA_FACTS`, `BISCUIT_ROLE_RIGHTS`, TTL, stratégie de clé et
+  booléens invalides **refusent** la configuration (plus d'ignorance silencieuse avec `WARN`). JSON strict
+  (`StrictJson` : 64 Kio, profondeur 16, clés dupliquées et valeurs non standard refusées). Faits
+  gouvernés uniques, noms `^[a-z][a-z0-9_]{0,63}$`, valeurs bornées ; `budget_cap` est un entier JSON
+  émis comme entier Datalog.
+- **Contrat de mandat** : `expires_at(<date>)` signé dans le bloc *authority*, `required_profile("native")`
+  par défaut, faits de contexte du vérificateur (`operation`, `resource`, `budget`, preuves…) réservés,
+  bornes sur le nombre de rôles/faits et sur la taille du jeton émis.
+- **`agent_pubkey` explicitement `null` refusé** (`400 invalid_agent_pubkey`) : plus de mandat non ancré
+  renvoyé en `200` à un appelant qui demandait l'ancrage.
+- **Clé racine** : stratégie par défaut `generated` (`auto` en devient l'alias, sans bascule opportuniste
+  vers la clé JWT du realm) ; `realm` exige `BISCUIT_REALM_KEY_KID`. Génération refusée sans
+  `BISCUIT_ALLOW_KEY_BOOTSTRAP=true` (dev mono-nœud). Chiffrement `enc:v2:` lié au realm par AAD ; seeds en
+  clair ou `enc:v1:` migrées sans changer la clé publique lors d'une émission authentifiée.
+- **Mapper** : cible uniquement l'access token ; une configuration invalide fait échouer l'émission au
+  lieu d'omettre le claim ; les attributs utilisateur ne peuvent fournir ni profil, ni audience, ni droits.
+- **Audit** au format JSON échappé, avec événement `capability_denied` sur refus.
+- `SecurityContractTest` verrouille ces garanties et exporte les fixtures d'interopérabilité vérifiées
+  côté Python par `MCPproxy/scripts/check_java_interop.py`.
+
 ### Ajouté
 - **Ancrage d'une clé d'agent (profil 3b)** : `POST /realms/{realm}/biscuit/token` accepte désormais un
   corps JSON **facultatif** `{"agent_pubkey": "ed25519/<64 hex>"}` — sans corps, le comportement est

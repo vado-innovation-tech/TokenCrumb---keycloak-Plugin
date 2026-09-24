@@ -27,7 +27,9 @@ class BiscuitKeyManagerTest {
     private static final String HEX32 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
 
     private static BiscuitConfig config(Map<String, String> env) {
-        return BiscuitConfig.from(env);
+        var explicit = new HashMap<>(env);
+        explicit.put("BISCUIT_ALLOW_KEY_BOOTSTRAP", "true");
+        return BiscuitConfig.from(explicit);
     }
 
     /** RealmModel mocké dont getAttribute/setAttribute sont adossés à une Map. */
@@ -104,16 +106,7 @@ class BiscuitKeyManagerTest {
 
     @Test
     void malformedKekRefusesToGenerate() {
-        Map<String, String> store = new HashMap<>();
-        RealmModel realm = realmBackedBy(store);
-        KeycloakSession session = mock(KeycloakSession.class);
-        BiscuitConfig cfg = config(Map.of(
-                "BISCUIT_KEY_STRATEGY", "generated",
-                "BISCUIT_KEY_ENCRYPTION_KEY", "too-short"));
-
-        assertThrows(BiscuitKeyManager.KeyResolutionException.class,
-                () -> BiscuitKeyManager.rootKeyPair(session, realm, cfg));
-        assertFalse(store.containsKey(BiscuitKeyManager.REALM_ATTRIBUTE));
+        assertThrows(IllegalArgumentException.class, () -> config(Map.of("BISCUIT_KEY_ENCRYPTION_KEY", "too-short")));
     }
 
     @Test

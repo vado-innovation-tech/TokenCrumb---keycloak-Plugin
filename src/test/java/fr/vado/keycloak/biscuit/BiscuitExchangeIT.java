@@ -45,6 +45,9 @@ class BiscuitExchangeIT {
     static void startKeycloak() {
         keycloak = new KeycloakContainer("quay.io/keycloak/keycloak:26.4.7")
                 .withRealmImportFile("/biscuit-demo-realm.json")
+                .withEnv("BISCUIT_ALLOW_KEY_BOOTSTRAP", "true")
+                .withEnv("BISCUIT_EXTRA_FACTS", "[{\"name\":\"audience\",\"values\":[\"biscuitmcp://interop\"]},{\"name\":\"budget_cap\",\"values\":[2]}]")
+                .withEnv("BISCUIT_ROLE_RIGHTS", "[{\"role\":\"user\",\"tool\":\"read_file\",\"operation\":\"read\"}]")
                 .withProviderLibsFrom(List.of(new File("target/keycloak-biscuit-exchange.jar")));
         keycloak.start();
     }
@@ -120,7 +123,10 @@ class BiscuitExchangeIT {
         assertTrue(body.get("expires_at").asLong() > Instant.now().getEpochSecond());
 
         // vérification hors-ligne : seule la clé publique exposée par l'extension est utilisée
-        Biscuit biscuit = Biscuit.from_b64url(biscuitB64, fetchPublicKey());
+        PublicKey publicKey = fetchPublicKey();
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target/keycloak-live-interop.json"), JSON.writeValueAsString(
+                java.util.Map.of("token",biscuitB64,"authority_pub","ed25519/"+publicKey.toHex(),"now",Instant.now().toString())));
+        Biscuit biscuit = Biscuit.from_b64url(biscuitB64, publicKey);
         biscuit.authorizer().set_time().allow().authorize();
 
         String printed = biscuit.print();
@@ -248,6 +254,19 @@ class BiscuitExchangeIT {
         assertTrue(printed.contains("required_profile(\"hardened_biscuit_anchored\")"), printed);
         // Les droits restent ceux du JWT présenté : ancrer ne fait que restreindre.
         assertTrue(printed.contains("realm_role(\"admin\")"), printed);
+    }
+
+    @Test
+    void exportsARealAnchoredHolderForPythonVerification() throws Exception {
+        // Ephemeral test identity only; the private key is held by the requesting client.
+        var agent = new org.biscuitsec.biscuit.crypto.KeyPair(new java.security.SecureRandom());
+        var response = exchange("Bearer " + passwordGrant(),
+                "{\"agent_pubkey\":\"ed25519/" + agent.public_key().toHex() + "\"}");
+        assertEquals(200, response.statusCode(), response.body());
+        var fixture = java.util.Map.of("token",JSON.readTree(response.body()).get("biscuit").asText(),
+                "authority_pub","ed25519/"+fetchPublicKey().toHex(),"now",Instant.now().toString(),
+                "agent_private","ed25519-private/"+agent.toHex());
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target/keycloak-live-3b-interop.json"),JSON.writeValueAsString(fixture));
     }
 
     @Test

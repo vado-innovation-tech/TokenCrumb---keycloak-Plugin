@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -40,11 +41,11 @@ class BiscuitProtocolMapperTest {
     }
 
     @Test
-    void blankAudienceAndProfileAreIgnored() {
+    void blankAudienceAndProfileAreRefused() {
         Map<String, String> cfg = new HashMap<>();
         cfg.put(BiscuitProtocolMapper.AUDIENCE, "   ");
         cfg.put(BiscuitProtocolMapper.REQUIRED_PROFILE, "");
-        assertTrue(facts(cfg).isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> facts(cfg));
     }
 
     @Test
@@ -57,10 +58,7 @@ class BiscuitProtocolMapperTest {
         Map<String, String> cfg = new HashMap<>();
         cfg.put(BiscuitProtocolMapper.EXTRA_FACTS, MapperTypeSerializer.serialize(raw));
 
-        List<BiscuitMinter.FactSpec> facts = facts(cfg);
-        assertEquals(1, facts.size());
-        assertEquals("tenant_id", facts.get(0).name());
-        assertEquals(List.of("exado"), facts.get(0).values());
+        assertThrows(IllegalArgumentException.class, () -> facts(cfg));
     }
 
     @Test
@@ -74,9 +72,7 @@ class BiscuitProtocolMapperTest {
         Map<String, String> cfg = new HashMap<>();
         cfg.put(BiscuitProtocolMapper.EXTRA_FACTS, MapperTypeSerializer.serialize(raw));
 
-        List<BiscuitMinter.FactSpec> facts = facts(cfg);
-        assertEquals(1, facts.size());
-        assertEquals("tenant_id", facts.get(0).name());
+        assertThrows(IllegalArgumentException.class, () -> facts(cfg));
     }
 
     private static Map<String, String> derivedCfg(String factName, String attrName) {
@@ -104,7 +100,7 @@ class BiscuitProtocolMapperTest {
         UserModel user = mock(UserModel.class);
         when(user.getFirstAttribute("whatever")).thenReturn("forged");
         // key_id est cœur : refusé même par la voie dérivée (gouvernée)
-        assertTrue(BiscuitProtocolMapper.derivedFacts(derivedCfg("key_id", "whatever"), user).isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> BiscuitProtocolMapper.derivedFacts(derivedCfg("key_id", "whatever"), user));
     }
 
     @Test
@@ -116,11 +112,9 @@ class BiscuitProtocolMapperTest {
 
     @Test
     void freeMapStillRejectsAgentId() {
-        // contraste : agent_id en littéral dans la map libre reste refusé
-        Map<String, String> cfg = new HashMap<>();
-        cfg.put(BiscuitProtocolMapper.EXTRA_FACTS,
+        Map<String, String> cfg = Map.of(BiscuitProtocolMapper.EXTRA_FACTS,
                 MapperTypeSerializer.serialize(Map.of("agent_id", List.of("forged"))));
-        assertTrue(facts(cfg).isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> facts(cfg));
     }
 
     @Test

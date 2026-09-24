@@ -1,6 +1,7 @@
 package fr.vado.keycloak.biscuit;
 
 import org.biscuitsec.biscuit.crypto.KeyPair;
+import org.biscuitsec.biscuit.datalog.RunLimits;
 import org.biscuitsec.biscuit.error.Error;
 import org.biscuitsec.biscuit.token.Biscuit;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,7 @@ import org.keycloak.representations.AccessToken;
 
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Set;
@@ -23,6 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * si ces tests passent, l'IT ne peut plus échouer sur la construction du Biscuit.
  */
 class BiscuitMinterTest {
+
+    // These are logic tests: allow for shared-runner scheduling without changing production limits.
+    private static final RunLimits TEST_LIMITS = new RunLimits(1000, 100, Duration.ofSeconds(1));
 
     private static final KeyPair ROOT = new KeyPair(new SecureRandom());
     private static final Instant NOW = Instant.parse("2026-06-11T10:00:00Z");
@@ -61,7 +66,7 @@ class BiscuitMinterTest {
         assertTrue(printed.contains("check if time($t)"), printed);
 
         // l'authorizer passe au temps de frappe (déterministe, antérieur à l'expiration)
-        parsed.authorizer().add_fact(NOW_TIME_FACT).allow().authorize();
+        parsed.authorizer().add_fact(NOW_TIME_FACT).allow().authorize(TEST_LIMITS);
     }
 
     @Test
@@ -71,7 +76,7 @@ class BiscuitMinterTest {
         Biscuit parsed = Biscuit.from_b64url(result.biscuitB64(), ROOT.public_key());
 
         assertThrows(Error.FailedLogic.class, () ->
-                parsed.authorizer().add_fact("time(2999-01-01T00:00:00Z)").allow().authorize());
+                parsed.authorizer().add_fact("time(2999-01-01T00:00:00Z)").allow().authorize(TEST_LIMITS));
     }
 
     @Test
@@ -90,12 +95,7 @@ class BiscuitMinterTest {
 
     @Test
     void hugeTtlDoesNotOverflowAndExpiryStaysFormattable() throws Exception {
-        // MINT-3 : un TTL démesuré ne doit plus déborder ni produire une date hors-plage ISO_INSTANT
-        BiscuitMinter.MintResult result =
-                BiscuitMinter.mint(token("u", "c", null), ROOT, Long.MAX_VALUE, NOW);
-        assertEquals(253_402_300_799L, result.expiresAt(), "exp doit être borné à 9999-12-31T23:59:59Z");
-        // le token reste sérialisable et vérifiable au temps courant
-        Biscuit.from_b64url(result.biscuitB64(), ROOT.public_key()).authorizer().set_time().allow().authorize();
+        assertThrows(IllegalArgumentException.class, () -> BiscuitMinter.mint(token("u", "c", null), ROOT, Long.MAX_VALUE, NOW));
     }
 
     @Test
@@ -138,7 +138,7 @@ class BiscuitMinterTest {
                 List.of(new BiscuitMinter.FactSpec("audience", List.of("x\"); role(\"hacker"))));
         Biscuit parsed = Biscuit.from_b64url(result.biscuitB64(), ROOT.public_key());
         assertThrows(Error.FailedLogic.class, () -> parsed.authorizer()
-                .add_fact(NOW_TIME_FACT).add_check("check if role(\"hacker\")").allow().authorize());
+                .add_fact(NOW_TIME_FACT).add_check("check if role(\"hacker\")").allow().authorize(TEST_LIMITS));
     }
 
     @Test
@@ -180,9 +180,9 @@ class BiscuitMinterTest {
         Biscuit parsed = Biscuit.from_b64url(result.biscuitB64(), ROOT.public_key());
 
         // le token reste vérifiable normalement…
-        parsed.authorizer().add_fact(NOW_TIME_FACT).allow().authorize();
+        parsed.authorizer().add_fact(NOW_TIME_FACT).allow().authorize(TEST_LIMITS);
         // …mais aucun fact role("hacker") n'a été créé : l'exiger doit échouer
         assertThrows(Error.FailedLogic.class, () -> parsed.authorizer()
-                .add_fact(NOW_TIME_FACT).add_check("check if role(\"hacker\")").allow().authorize());
+                .add_fact(NOW_TIME_FACT).add_check("check if role(\"hacker\")").allow().authorize(TEST_LIMITS));
     }
 }

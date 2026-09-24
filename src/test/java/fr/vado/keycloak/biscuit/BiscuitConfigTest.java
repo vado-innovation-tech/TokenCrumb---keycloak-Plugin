@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -30,7 +31,7 @@ class BiscuitConfigTest {
         BiscuitConfig c = from(Map.of());
         assertTrue(c.enabled());
         assertEquals(BiscuitConfig.DEFAULT_TTL_SECONDS, c.ttlSeconds());
-        assertEquals(BiscuitConfig.KeyStrategy.AUTO, c.keyStrategy());
+        assertEquals(BiscuitConfig.KeyStrategy.GENERATED, c.keyStrategy());
         assertNull(c.realmKeyKid());
         assertNull(c.encryptionKey());
         assertFalse(c.encryptionKeyInvalid());
@@ -41,7 +42,7 @@ class BiscuitConfigTest {
         for (String v : new String[]{"false", "FALSE", "0", "no", "off", " Off "}) {
             assertFalse(from(Map.of("BISCUIT_ENABLED", v)).enabled(), v);
         }
-        for (String v : new String[]{"true", "1", "yes", "whatever"}) {
+        for (String v : new String[]{"true", "1", "yes", "on"}) {
             assertTrue(from(Map.of("BISCUIT_ENABLED", v)).enabled(), v);
         }
     }
@@ -49,18 +50,15 @@ class BiscuitConfigTest {
     @Test
     void ttlParsingAndBounds() {
         assertEquals(600L, from(Map.of("BISCUIT_TOKEN_TTL", "600")).ttlSeconds());
-        assertEquals(BiscuitConfig.DEFAULT_TTL_SECONDS, from(Map.of("BISCUIT_TOKEN_TTL", "abc")).ttlSeconds());
-        assertEquals(BiscuitConfig.DEFAULT_TTL_SECONDS, from(Map.of("BISCUIT_TOKEN_TTL", "0")).ttlSeconds());
-        assertEquals(BiscuitConfig.DEFAULT_TTL_SECONDS, from(Map.of("BISCUIT_TOKEN_TTL", "-5")).ttlSeconds());
-        assertEquals(BiscuitConfig.MAX_TTL_SECONDS,
-                from(Map.of("BISCUIT_TOKEN_TTL", String.valueOf(Long.MAX_VALUE))).ttlSeconds());
+        for (String bad : List.of("abc", "0", "-5", "", String.valueOf(Long.MAX_VALUE)))
+            assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_TOKEN_TTL", bad)));
     }
 
     @Test
     void strategyParsing() {
         assertEquals(BiscuitConfig.KeyStrategy.REALM, from(Map.of("BISCUIT_KEY_STRATEGY", "realm")).keyStrategy());
         assertEquals(BiscuitConfig.KeyStrategy.GENERATED, from(Map.of("BISCUIT_KEY_STRATEGY", "GENERATED")).keyStrategy());
-        assertEquals(BiscuitConfig.KeyStrategy.AUTO, from(Map.of("BISCUIT_KEY_STRATEGY", "bogus")).keyStrategy());
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_KEY_STRATEGY", "bogus")));
     }
 
     @Test
@@ -88,9 +86,7 @@ class BiscuitConfigTest {
 
     @Test
     void malformedKekFlagsInvalidAndNullKey() {
-        BiscuitConfig c = from(Map.of("BISCUIT_KEY_ENCRYPTION_KEY", "too-short"));
-        assertNull(c.encryptionKey());
-        assertTrue(c.encryptionKeyInvalid());
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_KEY_ENCRYPTION_KEY", "too-short")));
     }
 
     @Test
@@ -104,7 +100,7 @@ class BiscuitConfigTest {
     @Test
     void extraFactsDefaultEmpty() {
         assertTrue(from(Map.of()).extraFacts().isEmpty());
-        assertTrue(from(Map.of("BISCUIT_EXTRA_FACTS", "   ")).extraFacts().isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_EXTRA_FACTS", "   ")));
     }
 
     @Test
@@ -120,30 +116,21 @@ class BiscuitConfigTest {
 
     @Test
     void extraFactsInvalidJsonYieldsEmpty() {
-        assertTrue(from(Map.of("BISCUIT_EXTRA_FACTS", "not json")).extraFacts().isEmpty());
-        // un objet (et non un tableau) est rejeté en bloc
-        assertTrue(from(Map.of("BISCUIT_EXTRA_FACTS", "{\"name\":\"audience\"}")).extraFacts().isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_EXTRA_FACTS", "not json")));
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_EXTRA_FACTS", "{}")));
     }
 
     @Test
     void extraFactsSkipInvalidAndReservedNames() {
-        BiscuitConfig c = from(Map.of("BISCUIT_EXTRA_FACTS",
-                "[{\"name\":\"1bad\",\"values\":[\"x\"]},"          // nom Datalog invalide
-                        + "{\"name\":\"user\",\"values\":[\"x\"]}," // nom cœur réservé
-                        + "{\"name\":\"audience\",\"values\":[\"ok\"]}]"));
-        assertEquals(1, c.extraFacts().size());
-        assertEquals("audience", c.extraFacts().get(0).name());
+        for (String name : List.of("1bad", "user", "operation", "time", "key_id"))
+            assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_EXTRA_FACTS",
+                    "[{\"name\":\"" + name + "\",\"values\":[\"x\"]}]")));
     }
 
     @Test
     void extraFactsAllowGovernedButRejectCore() {
-        // BISCUIT_EXTRA_FACTS = config déployeur de confiance (voie gouvernée) : peut poser un fait
-        // gouverné (audience) mais jamais un fait cœur frappé par le moteur (key_id).
-        BiscuitConfig c = from(Map.of("BISCUIT_EXTRA_FACTS",
-                "[{\"name\":\"key_id\",\"values\":[\"forged\"]},"
-                        + "{\"name\":\"required_profile\",\"values\":[\"native\"]}]"));
-        assertEquals(1, c.extraFacts().size());
-        assertEquals("required_profile", c.extraFacts().get(0).name());
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_EXTRA_FACTS",
+                "[{\"name\":\"key_id\",\"values\":[\"forged\"]}]")));
     }
 
     @Test

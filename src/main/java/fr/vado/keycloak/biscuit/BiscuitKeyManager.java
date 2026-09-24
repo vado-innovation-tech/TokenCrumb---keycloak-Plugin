@@ -86,12 +86,13 @@ final class BiscuitKeyManager {
                             + "EdDSA/Ed25519 signing key"
                             + (config.realmKeyKid() != null ? " with kid '" + config.realmKeyKid() + "'" : "")));
             case GENERATED -> generatedKey(realm, config, allowGenerate);
-            case AUTO -> fromRealmKey(session, realm, config).orElseGet(() -> generatedKey(realm, config, allowGenerate));
+            case AUTO -> generatedKey(realm, config, allowGenerate); // stable dedicated root; no opportunistic switch to JWT signing key
         };
     }
 
     private static Optional<RootKey> fromRealmKey(KeycloakSession session, RealmModel realm, BiscuitConfig config) {
         String pinnedKid = config.realmKeyKid();
+        if (pinnedKid == null) throw new KeyResolutionException("realm strategy requires a dedicated BISCUIT_REALM_KEY_KID");
         try {
             Optional<RootKey> resolved = session.keys().getKeysStream(realm)
                     .filter(k -> k.getStatus() != null && k.getStatus().isActive())
@@ -110,8 +111,7 @@ final class BiscuitKeyManager {
             }
             return resolved;
         } catch (RuntimeException e) {
-            LOG.warn("Failed to inspect realm keys, falling back to generated key strategy", e);
-            return Optional.empty();
+            throw new KeyResolutionException("failed to inspect pinned realm key", e);
         }
     }
 
@@ -143,17 +143,18 @@ final class BiscuitKeyManager {
     private static RootKey generatedKey(RealmModel realm, BiscuitConfig config, boolean allowGenerate) {
         String stored = realm.getAttribute(REALM_ATTRIBUTE);
         if (stored != null) {
-            KeyPair keyPair = decodeStored(stored, config);
+            KeyPair keyPair = readAndMigrate(stored, realm, config, allowGenerate);
             return new RootKey(keyPair, fingerprint(keyPair));
         }
         if (!allowGenerate) {
             throw new KeyResolutionException("no Biscuit root key has been provisioned yet for realm '"
                     + realm.getName() + "'; trigger an exchange (POST .../biscuit/token) first");
         }
+        if (!config.bootstrap()) throw new KeyResolutionException("provision a dedicated root before serving; development bootstrap requires BISCUIT_ALLOW_KEY_BOOTSTRAP=true on a single node");
         synchronized (GENERATION_LOCKS.computeIfAbsent(realm.getId(), id -> new Object())) {
             stored = realm.getAttribute(REALM_ATTRIBUTE);
             if (stored != null) {
-                KeyPair keyPair = decodeStored(stored, config);
+                KeyPair keyPair = readAndMigrate(stored, realm, config, allowGenerate);
                 return new RootKey(keyPair, fingerprint(keyPair));
             }
             if (config.encryptionKeyInvalid()) {
@@ -163,7 +164,7 @@ final class BiscuitKeyManager {
             KeyPair keyPair = new KeyPair(new SecureRandom());
             boolean encrypted = config.encryptionKey() != null;
             String value = encrypted
-                    ? KeyEncryption.encrypt(keyPair.toBytes(), config.encryptionKey())
+                    ? KeyEncryption.encrypt(keyPair.toBytes(), config.encryptionKey(), realm.getId())
                     : keyPair.toHex();
             realm.setAttribute(REALM_ATTRIBUTE, value);
             if (encrypted) {
@@ -178,14 +179,24 @@ final class BiscuitKeyManager {
         }
     }
 
-    static KeyPair decodeStored(String stored, BiscuitConfig config) {
-        if (stored.startsWith(KeyEncryption.PREFIX)) {
+    private static KeyPair readAndMigrate(String stored, RealmModel realm, BiscuitConfig config, boolean mayWrite) {
+        KeyPair key = decodeStored(stored, config, realm.getId());
+        if (config.encryptionKey() != null && !stored.startsWith(KeyEncryption.PREFIX)) {
+            if (!mayWrite) throw new KeyResolutionException("root key requires encrypted v2 migration through an authenticated exchange");
+            realm.setAttribute(REALM_ATTRIBUTE, KeyEncryption.encrypt(key.toBytes(), config.encryptionKey(), realm.getId()));
+        }
+        return key;
+    }
+
+    static KeyPair decodeStored(String stored, BiscuitConfig config) { return decodeStored(stored, config, "test"); }
+    private static KeyPair decodeStored(String stored, BiscuitConfig config, String context) {
+        if (stored.startsWith(KeyEncryption.PREFIX) || stored.startsWith(KeyEncryption.LEGACY_PREFIX)) {
             if (config.encryptionKey() == null) {
                 throw new KeyResolutionException(
                         "stored root key is encrypted but BISCUIT_KEY_ENCRYPTION_KEY is unset");
             }
             try {
-                return new KeyPair(KeyEncryption.decrypt(stored, config.encryptionKey()));
+                return new KeyPair(KeyEncryption.decrypt(stored, config.encryptionKey(), context));
             } catch (KeyEncryption.DecryptionException e) {
                 throw new KeyResolutionException(e.getMessage(), e);
             }

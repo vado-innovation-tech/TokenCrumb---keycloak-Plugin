@@ -308,9 +308,9 @@ redémarrage.
 | Variable d'env (repli) | Défaut | Description |
 |---|---|---|
 | `BISCUIT_ENABLED` | `true` | `false` → les endpoints répondent `404` (extension désactivée sans redéploiement). |
-| `BISCUIT_TOKEN_TTL` | `300` | Durée de vie max du Biscuit en secondes. L'expiration effective est `min(exp du JWT, now + TTL)`. Gardez-la courte (pas de révocation, voir limites). Bornée à `315360000` (~10 ans) : une valeur supérieure est ramenée à ce maximum (au-delà l'expiration dépasserait les dates formatables). |
-| `BISCUIT_KEY_STRATEGY` | `auto` | `auto` : clé EdDSA/Ed25519 du realm si exploitable, sinon clé générée. `realm` : exige une clé realm (sinon `503`). `generated` : toujours la clé générée/persistée. |
-| `BISCUIT_REALM_KEY_KID` | *(non définie)* | *(stratégies `realm`/`auto`)* kid de la clé EdDSA du realm à **dédier** au Biscuit. Si définie, seule la clé de ce kid est éligible — évite de réutiliser par accident la clé de signature JWT du realm. Si absente, la première clé EdDSA active est utilisée **avec un `WARN`** invitant à l'épingler. |
+| `BISCUIT_TOKEN_TTL` | `300` | Durée de vie max du Biscuit en secondes. L'expiration effective est `min(exp du JWT, now + TTL)`. Gardez-la courte (pas de révocation, voir limites). Bornée à `315360000` (~10 ans) : une valeur hors domaine est refusée (au-delà l'expiration dépasserait les dates formatables). |
+| `BISCUIT_KEY_STRATEGY` | `generated` | Racine dédiée persistée. `auto` est un alias historique stable de generated ; aucune bascule opportuniste. `realm` exige une clé dédiée épinglée. |
+| `BISCUIT_REALM_KEY_KID` | non défini | Obligatoire avec la stratégie realm ; la clé doit être dédiée à Biscuit. Une inspection en échec refuse la résolution. |
 | `BISCUIT_KEY_ENCRYPTION_KEY` | *(non définie)* | Clé AES-256 (64 caractères hex ou base64 de 32 octets) pour chiffrer la seed générée avant persistance (AES-GCM). Sans elle, la seed est stockée en clair (un `WARN` est émis à la génération, voir ci-dessous). |
 | `BISCUIT_EXTRA_FACTS` | *(non définie)* | Faits supplémentaires à injecter dans le bloc authority, en **JSON** : un tableau d'objets `{"name": ..., "values": [...]}`. Permet de scoper le token sans toucher au code (ex. `audience`, `required_profile`). Voir ci-dessous. |
 
@@ -319,7 +319,7 @@ redémarrage.
 Le plugin est un **émetteur Biscuit générique** : par défaut il ne produit que les faits issus du
 JWT (`user`, `client`, `issuer`, `realm_role`, `client_role`, `jti`). `BISCUIT_EXTRA_FACTS` permet
 d'ajouter des faits propres à un déploiement **sans modifier le code** — les valeurs métier (MCP ou
-autre) restent de la configuration. Un déploiement qui ne la définit pas n'émet **aucun** champ en plus.
+autre) restent de la configuration. L’émetteur ajoute toujours l’échéance signée et un profil natif explicite ; la gateway exige aussi une audience configurée. Les droits d’outils découlent de la table de rôles, ou du mode statique explicitement choisi.
 
 ```yaml
 environment:
@@ -331,15 +331,15 @@ environment:
 
 Produit, en plus des faits JWT : `audience("biscuitmcp://exado-gateway")` et `required_profile("native")`.
 
-Règles de validation (faits invalides **ignorés** avec un `WARN`, l'émission ne plante jamais) :
+Règles de validation : tout fait invalide refuse la configuration complète ; aucune contrainte ne disparaît silencieusement.
 
-- le **nom** doit être un prédicat Datalog valide : `^[a-z][a-zA-Z0-9_]*$` ;
+- le **nom** doit être un prédicat Datalog valide : `^[a-z][a-z0-9_]{0,63}$` ;
 - les noms **réservés** sont refusés selon le niveau de la voie (voir
   [Faits réservés](#faits-réservés-deux-niveaux)). `BISCUIT_EXTRA_FACTS` est une config **déployeur de
   confiance** (voie *gouvernée*) : elle peut poser un fait gouverné comme `audience`/`required_profile`,
   mais jamais un fait **cœur** (`user`, `key_id`, `jti`…) ;
-- les `values` sont des littéraux **string** (insensibles à l'injection Datalog, comme les faits JWT) ;
-- un JSON illisible ou qui n'est pas un tableau ⇒ aucun fait supplémentaire (toujours un `WARN`).
+- les `values` sont des littéraux string ; `budget_cap` exige un entier JSON positif ou nul, émis comme entier Datalog ;
+- un JSON illisible, ambigu, de mauvais type, trop profond ou surdimensionné refuse la configuration.
 
 > **Portée** : config **globale** (tous les realms de l'instance), lue au démarrage. Le plugin se
 > contente d'**émettre** ces faits ; leur **enforcement** (ex. refus anti-downgrade sur
@@ -369,12 +369,11 @@ Tout autre nom (ex. `tenant_id`) est un fait métier libre, accepté sur toutes 
 Chaque Biscuit émis (REST ou mapper) produit **une ligne de journal** structurée, catégorie
 `fr.vado.keycloak.biscuit.BiscuitAudit`, niveau `INFO` :
 
-```text
-event=capability_issued path=rest realm=biscuit-demo capability_id=<jti> key_id=<kid> \
-  issuer=<iss> audience=<aud> required_profile=<rp> expires_at=<epoch> sub=<sub>
+```json
+{"event":"capability_issued","path":"rest","realm":"biscuit-demo","capability_id":"<jti>","key_id":"<kid>","issuer":"<iss>","sub":"<sub>"}
 ```
 
-`path` vaut `rest` ou `mapper` ; les champs absents valent `-`. Démontrable via
+`path` vaut `rest` ou `mapper`. Les refus produisent `capability_denied` ; les valeurs sont échappées par le sérialiseur JSON. Démontrable via
 `docker compose logs keycloak | grep capability_issued`.
 
 > **Périmètre V1.** C'est une trace d'émission exploitable, **pas** un journal inviolable : le
@@ -393,43 +392,30 @@ environment:
 
 ## Gestion des clés — choix retenu
 
-La clé racine Ed25519 qui signe les Biscuits est résolue ainsi (stratégie `auto`, le défaut) :
+La stratégie par défaut est `generated` : une racine dédiée persistée dans le realm.
+`auto` est son alias historique stable. Aucune erreur d’inspection d’une clé realm
+ne déclenche une génération de remplacement. `realm` exige `BISCUIT_REALM_KEY_KID`
+épinglé et une clé Ed25519 active dont les composantes publique et privée concordent.
 
-1. **Clé EdDSA du realm** (option préférée) : si le realm possède une clé de signature active
-   `EdDSA` sur la courbe `Ed25519` (Realm settings → Keys → Add provider → `eddsa-generated`),
-   l'extension en extrait la seed et signe les Biscuits avec. Avantage : la clé est gérée par le
-   `KeyManager` Keycloak (stockage, console d'admin, rotation outillée). Une vérification croisée
-   (clé publique dérivée == clé publique du realm) garantit qu'une extraction incorrecte ne peut
-   pas produire de tokens invalides silencieusement.
-   ⚠️ Cette clé peut aussi servir à signer des JWT si vous l'activez comme algorithme de realm —
-   évitez le double usage en **épinglant** une clé dédiée via `BISCUIT_REALM_KEY_KID` (le kid de la clé
-   EdDSA réservée au Biscuit), ou utilisez `generated`. Sans épinglage, la première clé EdDSA active est
-   retenue et un `WARN` est journalisé.
-2. **Clé générée** (fallback — le cas courant, un realm n'a pas de clé EdDSA par défaut) : au
-   premier échange, l'extension génère une paire Ed25519 et persiste la **seed (hex) dans un
-   attribut du realm** (`biscuit.root.key`). Les démarrages suivants la rechargent.
-   - Si `BISCUIT_KEY_ENCRYPTION_KEY` est définie, la seed est chiffrée **AES-256-GCM** avant
-     persistance (format `enc:v1:<base64(iv‖ciphertext)>`). Si la valeur stockée est chiffrée et
-     que la variable disparaît, l'extension répond `503` avec un log explicite (jamais de
-     régénération silencieuse).
-   - Sans cette variable, la seed est stockée **en clair** dans la base Keycloak (un `WARN` est émis à
-     la génération) — c'est le même niveau de protection que les client secrets Keycloak (eux aussi en
-     clair en base). Assumé et documenté ; chiffrez si votre modèle de menace l'exige.
+En production, provisionner la racine avant le service. Une racine manquante refuse
+l’émission ; `BISCUIT_ALLOW_KEY_BOOTSTRAP=true` autorise seulement le bootstrap de
+développement mono-nœud, comme dans docker-compose et les tests d’intégration.
+
+Avec une KEK de 32 octets, la seed est stockée en `enc:v2:` AES-256-GCM, liée au
+realm et à son usage par les données authentifiées associées. Une seed historique
+en clair ou `enc:v1:` est migrée avec la même clé publique lors d’une émission
+authentifiée. Le GET de clé publique ne modifie pas le realm. KEK absente ou erronée
+face à une seed chiffrée : refus, aucune régénération.
 
 ### Rotation de la clé
 
-Il n'y a pas de rotation automatique. Procédure manuelle :
-
-- **Stratégie `generated`** : supprimez l'attribut de realm `biscuit.root.key`
-  (Admin REST : `PUT /admin/realms/{realm}` avec l'attribut retiré, ou directement en base), puis
-  refaites un échange — une nouvelle clé est générée. **Tous les Biscuits déjà émis deviennent
-  immédiatement invalides**, ce qui est le comportement voulu avec des TTL courts : au pire
-  `BISCUIT_TOKEN_TTL` secondes de tokens perdus, les clients refont simplement un échange.
-- **Stratégie `realm`** : faites tourner la clé EdDSA du realm via la console Keycloak (ajouter le
-  nouveau provider de clé, passer l'ancien en `disabled`). Même effet d'invalidation.
-- Dans les deux cas, les vérificateurs doivent **re-récupérer `GET /biscuit/public-key`** après
-  rotation. Si vos services mettent la clé en cache, prévoyez un TTL de cache court ou un refresh
-  sur échec de vérification.
+Provisionner la nouvelle racine par le canal d’administration de confiance et
+préprovisionner sa clé publique dans les vérificateurs. Pendant le recouvrement,
+BiscuitMCP accepte l’ancienne clé via `--previous-authority`. Retirer cette clé après
+expiration ou révocation des anciens mandats. Ne pas supprimer une seed active
+pour provoquer une génération et ne pas réapprendre une ancre à partir d’un échec
+réseau. La rotation reste opérée manuellement ; le registre de racines explicites
+ne constitue pas une intersection multi-autorité.
 
 ## Tests
 
@@ -470,3 +456,36 @@ Il n'y a pas de rotation automatique. Procédure manuelle :
   ou utiliser la stratégie `realm`.
 - Le endpoint `/public-key` n'expose que la clé **courante** : pas d'historique multi-clés pendant
   une rotation (les vérificateurs doivent basculer en même temps).
+
+## Corrections des audits — 9 septembre 2026
+
+Le contrat impose `expires_at(date)` signé, un profil reconnu et des métadonnées
+unaires uniques. `budget_cap` est un entier JSON/Datalog. Les faits de contexte
+(`operation`, `resource`, `budget`, preuves, etc.) sont réservés au vérificateur.
+Un `agent_pubkey` explicitement nul est un refus. Le mapper cible uniquement
+l’access token ; les attributs utilisateur ne peuvent choisir profil, audience ou droits.
+
+`BISCUIT_ROLE_RIGHTS` associe explicitement les rôles authentifiés aux droits :
+
+```json
+[{"role":"reader","tool":"read_file","operation":"read"},
+ {"role":"writer","client":"application","tool":"write_file","operation":"write"}]
+```
+
+Sans correspondance, aucun droit d’outil n’est ajouté. Un mode statique demande
+`BISCUIT_RIGHTS_MODE=static` et émet `rights_source("static_deployer")`. Les audiences
+restent une configuration de déploiement. Les faits dérivés d’attributs d’identité
+supposent que ces attributs sont administrés par une source de confiance.
+
+En production, provisionner la racine avant les échanges. Le bootstrap local
+`BISCUIT_ALLOW_KEY_BOOTSTRAP=true` est explicitement activé dans docker-compose
+start-dev et les tests ; il ne constitue pas un protocole de génération multinœud.
+Avec une KEK, la première émission authentifiée migre une seed en clair ou enc:v1
+vers enc:v2 lié au realm par AAD, en conservant sa clé publique. GET reste sans
+mutation et refuse une migration encore nécessaire.
+
+`./mvnw verify` exécute les tests unitaires puis un vrai Keycloak en Testcontainers.
+Les fixtures de `target/` sont émises par ces tests ; leurs clés d’agent privées
+sont des identités éphémères de test, jamais des clés réelles à déployer. Depuis
+MCPproxy, `scripts/check_java_interop.py` vérifie les fixtures native et 3b dans le
+vérificateur Python. Voir les faits F15–F18 de `../MCPproxy/docs/garanties-verifiees.md`.

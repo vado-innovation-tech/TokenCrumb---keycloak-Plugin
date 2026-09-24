@@ -38,7 +38,7 @@ import java.util.Map;
  * réutilise telle quelle {@link BiscuitMinter#mint}, donc la surface qui touche Keycloak reste mince.</p>
  */
 public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
-        implements OIDCAccessTokenMapper, OIDCIDTokenMapper, UserInfoTokenMapper {
+        implements OIDCAccessTokenMapper {
 
     public static final String PROVIDER_ID = "oidc-biscuit-mapper";
 
@@ -165,13 +165,14 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
             BiscuitKeyManager.RootKey root = BiscuitKeyManager.rootKey(session, realm, globalConfig);
             BiscuitMinter.MintResult result =
                     BiscuitMinter.mint(accessToken, root.keyPair(), root.keyId(),
-                            globalConfig.ttlSeconds(), Instant.now(), facts);
+                            globalConfig.ttlSeconds(), Instant.now(), globalConfig.authorizedFacts(accessToken, facts));
 
             accessToken.getOtherClaims().put(claimName(cfg), result.biscuitB64());
             BiscuitAudit.logIssued("mapper", realm.getName(), result.audit());
         } catch (Exception e) {
             // Ne jamais casser l'émission du JWT : on logge et on n'ajoute simplement pas le claim.
-            LOG.error("Biscuit mapper: minting failed, claim omitted", e);
+            BiscuitAudit.logDenied("mapper", "invalid_issuance");
+            throw new IllegalStateException("Biscuit mapper: invalid issuance configuration", e);
         }
     }
 
@@ -189,13 +190,15 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
 
         // Champs dédiés : voie gouvernée (noms validés, fixés par l'admin du client).
         String audience = cfg.get(AUDIENCE);
+        if (audience != null && audience.isBlank()) throw new IllegalArgumentException("blank audience");
         if (audience != null && !audience.isBlank()) {
-            BiscuitFacts.governed("audience", List.of(audience.trim())).ifPresent(facts::add);
+            facts.add(BiscuitFacts.governed("audience", List.of(audience.trim())).orElseThrow(() -> new IllegalArgumentException("invalid mapper fact")));
         }
 
         String profile = cfg.get(REQUIRED_PROFILE);
+        if (profile != null && profile.isBlank()) throw new IllegalArgumentException("blank profile");
         if (profile != null && !profile.isBlank()) {
-            BiscuitFacts.governed("required_profile", List.of(profile.trim())).ifPresent(facts::add);
+            facts.add(BiscuitFacts.governed("required_profile", List.of(profile.trim())).orElseThrow(() -> new IllegalArgumentException("invalid mapper fact")));
         }
 
         // Map libre per-client : voie restreinte — ne peut poser ni fait cœur ni fait gouverné,
@@ -204,7 +207,7 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
         if (rawMap != null && !rawMap.isBlank()) {
             Map<String, List<String>> entries = MapperTypeSerializer.deserialize(rawMap);
             for (Map.Entry<String, List<String>> entry : entries.entrySet()) {
-                BiscuitFacts.validated(entry.getKey(), entry.getValue()).ifPresent(facts::add);
+                facts.add(BiscuitFacts.validated(entry.getKey(), entry.getValue()).orElseThrow(() -> new IllegalArgumentException("invalid mapper fact")));
             }
         }
         return facts;
@@ -225,6 +228,8 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
         }
         for (Map.Entry<String, List<String>> entry : MapperTypeSerializer.deserialize(raw).entrySet()) {
             String factName = entry.getKey();
+            if (java.util.Set.of("required_profile", "audience", "budget_cap", "right", "rights_source").contains(factName))
+                throw new IllegalArgumentException("authorization metadata cannot come from user attributes");
             String attrName = entry.getValue().isEmpty() ? null : entry.getValue().get(0);
             if (attrName == null || attrName.isBlank()) {
                 continue;
@@ -233,7 +238,7 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
             if (value == null || value.isBlank()) {
                 continue; // attribut non présent sur l'identité → on n'émet rien
             }
-            BiscuitFacts.governed(factName, List.of(value)).ifPresent(facts::add);
+            facts.add(BiscuitFacts.governed(factName, List.of(value)).orElseThrow(() -> new IllegalArgumentException("invalid mapper fact")));
         }
         return facts;
     }

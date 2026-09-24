@@ -7,7 +7,8 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KC_HEALTH_ENABLED: "true"
       BISCUIT_TOKEN_TTL: "300"
-      BISCUIT_KEY_STRATEGY: "auto"
+      BISCUIT_KEY_STRATEGY: "generated"
+      BISCUIT_ALLOW_KEY_BOOTSTRAP: "true" # start-dev, single node only
       # Un vérificateur/gateway refuse un mandat sans audience dans le bloc d'autorité (absente =
       # DENY, jamais wildcard : sinon le mandat serait rejouable sur tout déploiement mappant le
       # même nom d'outil). La voie REST n'en pose aucune par défaut — on la déclare ici.
