@@ -19,6 +19,8 @@ import org.keycloak.protocol.oidc.mappers.UserInfoTokenMapper;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.IDToken;
+import org.keycloak.representations.dpop.DPoP;
+import org.keycloak.services.util.DPoPUtil;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -29,13 +31,18 @@ import java.util.Map;
  * Protocol Mapper OIDC : émet un Biscuit (signé par la clé racine du realm) dans un claim du token.
  *
  * <p>Voie d'émission <strong>complémentaire</strong> à l'endpoint REST {@code /biscuit/token}
- * (qui reste inchangé). Son intérêt : la configuration des faits supplémentaires se fait
- * <strong>par client, dans l'admin console</strong> (audience, required_profile, faits libres),
- * sans modifier le code.</p>
+ * (qui reste inchangé). Son intérêt : tout le mandat se configure <strong>par client, dans l'admin
+ * console</strong> (audience, profil, droits par rôle, plafond de budget, durée de vie, faits), sans
+ * variable d'environnement globale qui s'appliquerait à tous les realms de l'instance.</p>
  *
- * <p>Séparation des responsabilités : la stratégie de clé et le TTL viennent de la config globale
- * ({@link BiscuitConfig#fromScope}) ; les faits viennent de la config <em>par-mapper</em>. La frappe
- * réutilise telle quelle {@link BiscuitMinter#mint}, donc la surface qui touche Keycloak reste mince.</p>
+ * <p>Profil {@code hardened_biscuit_anchored} : la clé d'agent est celle de la preuve DPoP (RFC 9449)
+ * de la requête de token, vérifiée par Keycloak ({@link DPoPAnchor}). Sans preuve Ed25519 valide,
+ * l'émission du token échoue : jamais de mandat non ancré présenté comme 3b.</p>
+ *
+ * <p>Séparation des responsabilités : la stratégie de clé et le TTL plafond viennent de la config
+ * globale ({@link BiscuitConfig#fromScope}) ; les faits viennent de la config <em>par-mapper</em>. La
+ * frappe réutilise telle quelle {@link BiscuitMinter#mint}, donc la surface qui touche Keycloak reste
+ * mince.</p>
  */
 public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
         implements OIDCAccessTokenMapper {
@@ -49,6 +56,9 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
     static final String REQUIRED_PROFILE = "biscuit.required.profile";
     static final String EXTRA_FACTS = "biscuit.extra.facts";
     static final String DERIVED_FACTS = "biscuit.derived.facts";
+    static final String ROLE_RIGHTS = "biscuit.role.rights";
+    static final String BUDGET_CAP = "biscuit.budget.cap";
+    static final String TTL = "biscuit.ttl";
     static final String DEFAULT_CLAIM_NAME = "biscuit";
 
     private static final List<ProviderConfigProperty> CONFIG_PROPERTIES = new ArrayList<>();
@@ -73,15 +83,14 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
         profile.setName(REQUIRED_PROFILE);
         profile.setLabel("Required profile");
         profile.setType(ProviderConfigProperty.LIST_TYPE);
-        // Pas de hardened_biscuit_anchored ici : ce profil exige une clé d'agent ancrée dans le bloc
-        // d'autorité, et cette voie ne peut pas en ancrer (agent_pubkey est RESERVED_CORE sur toute
-        // voie de config). Le proposer ne produirait que des mandats refusés à chaque appel par la
-        // gateway (« profile downgrade »). Seul POST /biscuit/token avec agent_pubkey y donne accès.
-        profile.setOptions(List.of("native", "registry_backed"));
+        // hardened_biscuit_anchored : la clé d'agent vient de la preuve DPoP de la requête de token,
+        // jamais de la configuration (agent_pubkey reste RESERVED_CORE sur toute voie de config).
+        profile.setOptions(List.of("native", "registry_backed", BiscuitFacts.ANCHORED_PROFILE));
         profile.setHelpText("Si défini, ajoute required_profile(\"...\") (anti-downgrade ; enforcé côté "
                 + "gateway). registry_backed suppose un agent_id (voir Derived facts) résoluble par le "
-                + "registre de la gateway. Le profil hardened_biscuit_anchored n'est atteignable que "
-                + "par POST /biscuit/token avec agent_pubkey : cette voie ne peut pas ancrer de clé.");
+                + "registre de la gateway. hardened_biscuit_anchored ancre la clé Ed25519 de la preuve "
+                + "DPoP de la requête de token : sans preuve DPoP Ed25519, l'émission du token échoue. "
+                + "Activer « Require DPoP bound tokens » sur le client.");
         CONFIG_PROPERTIES.add(profile);
 
         ProviderConfigProperty extra = new ProviderConfigProperty();
@@ -100,6 +109,33 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
                 + "sur l'utilisateur (ou son service-account) à l'émission. Autorise les faits gouvernés "
                 + "(agent_id, principal_id…) car la valeur vient de l'identité, pas d'un texte libre.");
         CONFIG_PROPERTIES.add(derived);
+
+        ProviderConfigProperty rights = new ProviderConfigProperty();
+        rights.setName(ROLE_RIGHTS);
+        rights.setLabel("Role rights (JSON)");
+        rights.setType(ProviderConfigProperty.TEXT_TYPE);
+        rights.setHelpText("Droits d'outils accordés par rôle, en JSON : "
+                + "[{\"role\":\"analyst\",\"tool\":\"list_tables\",\"operation\":\"read\"}]. Ajouter "
+                + "\"client\":\"<clientId>\" pour un rôle client. Chaque rôle présent dans le JWT émet "
+                + "right(tool, operation) ; aucun droit sans correspondance. Vide : table globale "
+                + "BISCUIT_ROLE_RIGHTS.");
+        CONFIG_PROPERTIES.add(rights);
+
+        ProviderConfigProperty budget = new ProviderConfigProperty();
+        budget.setName(BUDGET_CAP);
+        budget.setLabel("Budget cap");
+        budget.setType(ProviderConfigProperty.STRING_TYPE);
+        budget.setHelpText("Plafond de budget du mandat : entier positif ou nul, émis budget_cap(N). "
+                + "Vide : aucun plafond.");
+        CONFIG_PROPERTIES.add(budget);
+
+        ProviderConfigProperty ttl = new ProviderConfigProperty();
+        ttl.setName(TTL);
+        ttl.setLabel("Lifetime (seconds)");
+        ttl.setType(ProviderConfigProperty.STRING_TYPE);
+        ttl.setHelpText("Durée de vie du Biscuit en secondes, plafonnée par BISCUIT_TOKEN_TTL et par "
+                + "l'expiration de l'access token. Vide : BISCUIT_TOKEN_TTL.");
+        CONFIG_PROPERTIES.add(ttl);
 
         OIDCAttributeMapperHelper.addIncludeInTokensConfig(CONFIG_PROPERTIES, BiscuitProtocolMapper.class);
     }
@@ -129,8 +165,9 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
 
     @Override
     public String getHelpText() {
-        return "Émet un Biscuit signé par la clé racine du realm dans un claim du token. "
-                + "Configurable par client : audience, required_profile, faits custom.";
+        return "Émet un Biscuit signé par la clé racine du realm dans un claim de l'access token. "
+                + "Configurable par client : audience, profil (dont ancrage DPoP), droits par rôle, "
+                + "budget, durée de vie, faits custom.";
     }
 
     @Override
@@ -160,12 +197,22 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
             Map<String, String> cfg = mappingModel.getConfig();
             List<BiscuitMinter.FactSpec> facts = factsFromConfig(cfg);
             facts.addAll(derivedFacts(cfg, userSession.getUser()));
+            List<RoleRights.Grant> grants = roleRights(cfg);
+            facts = grants == null ? globalConfig.authorizedFacts(accessToken, facts)
+                    : RoleRights.apply(accessToken, facts, grants, false);
+            if (anchored(cfg)) {
+                DPoP proof = session.getAttribute(DPoPUtil.DPOP_SESSION_ATTRIBUTE, DPoP.class);
+                String header = session.getContext().getHttpRequest().getHttpHeaders()
+                        .getHeaderString("DPoP");
+                facts = BiscuitFacts.anchored(facts,
+                        DPoPAnchor.agentPubkey(header, proof == null ? null : proof.getThumbprint()));
+            }
 
             RealmModel realm = session.getContext().getRealm();
             BiscuitKeyManager.RootKey root = BiscuitKeyManager.rootKey(session, realm, globalConfig);
             BiscuitMinter.MintResult result =
                     BiscuitMinter.mint(accessToken, root.keyPair(), root.keyId(),
-                            globalConfig.ttlSeconds(), Instant.now(), globalConfig.authorizedFacts(accessToken, facts));
+                            ttlSeconds(cfg, globalConfig.ttlSeconds()), Instant.now(), facts);
 
             accessToken.getOtherClaims().put(claimName(cfg), result.biscuitB64());
             BiscuitAudit.logIssued("mapper", realm.getName(), result.audit());
@@ -197,8 +244,14 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
 
         String profile = cfg.get(REQUIRED_PROFILE);
         if (profile != null && profile.isBlank()) throw new IllegalArgumentException("blank profile");
-        if (profile != null && !profile.isBlank()) {
+        // Profil ancré : posé par BiscuitFacts.anchored avec la clé DPoP, jamais seul depuis la config.
+        if (profile != null && !profile.isBlank() && !BiscuitFacts.ANCHORED_PROFILE.equals(profile.trim())) {
             facts.add(BiscuitFacts.governed("required_profile", List.of(profile.trim())).orElseThrow(() -> new IllegalArgumentException("invalid mapper fact")));
+        }
+
+        String budget = cfg.get(BUDGET_CAP);
+        if (budget != null && !budget.isBlank()) {
+            facts.add(BiscuitFacts.governed("budget_cap", List.of(budget.trim())).orElseThrow(() -> new IllegalArgumentException("invalid budget cap")));
         }
 
         // Map libre per-client : voie restreinte — ne peut poser ni fait cœur ni fait gouverné,
@@ -211,6 +264,27 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
             }
         }
         return facts;
+    }
+
+    static boolean anchored(Map<String, String> cfg) {
+        String profile = cfg.get(REQUIRED_PROFILE);
+        return profile != null && BiscuitFacts.ANCHORED_PROFILE.equals(profile.trim());
+    }
+
+    /** Table de droits du mapper ; {@code null} si non renseignée (repli sur la table globale). */
+    static List<RoleRights.Grant> roleRights(Map<String, String> cfg) {
+        String raw = cfg.get(ROLE_RIGHTS);
+        return raw == null || raw.isBlank() ? null : RoleRights.parse(raw);
+    }
+
+    /** Durée de vie du mapper, jamais au-delà du plafond global. */
+    static long ttlSeconds(Map<String, String> cfg, long globalTtl) {
+        String raw = cfg.get(TTL);
+        if (raw == null || raw.isBlank()) return globalTtl;
+        if (!raw.trim().matches("[0-9]{1,10}")) throw new IllegalArgumentException("invalid mapper TTL");
+        long ttl = Long.parseLong(raw.trim());
+        if (ttl <= 0) throw new IllegalArgumentException("invalid mapper TTL");
+        return Math.min(ttl, globalTtl);
     }
 
     /**

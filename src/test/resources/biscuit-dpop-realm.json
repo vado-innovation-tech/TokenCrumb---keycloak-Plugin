@@ -1,0 +1,94 @@
+{
+  "realm": "biscuit-dpop",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "roles": {
+    "realm": [
+      {
+        "name": "analyst"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "agent-cli",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "biscuit",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-biscuit-mapper",
+          "config": {
+            "biscuit.claim.name": "biscuit",
+            "biscuit.audience": "biscuitmcp://demo",
+            "biscuit.required.profile": "hardened_biscuit_anchored",
+            "biscuit.role.rights": "[{\"role\": \"analyst\", \"tool\": \"list_tables\", \"operation\": \"read\"}]",
+            "biscuit.budget.cap": "7",
+            "biscuit.ttl": "60",
+            "biscuit.derived.facts": "[{\"key\":\"agent_id\",\"value\":\"agent_id\"}]",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "attributes": {
+        "dpop.bound.access.tokens": "true"
+      }
+    },
+    {
+      "clientId": "agent-lax",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "biscuit",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-biscuit-mapper",
+          "config": {
+            "biscuit.claim.name": "biscuit",
+            "biscuit.audience": "biscuitmcp://demo",
+            "biscuit.required.profile": "hardened_biscuit_anchored",
+            "biscuit.role.rights": "[{\"role\": \"analyst\", \"tool\": \"list_tables\", \"operation\": \"read\"}]",
+            "biscuit.budget.cap": "7",
+            "biscuit.ttl": "60",
+            "biscuit.derived.facts": "[{\"key\":\"agent_id\",\"value\":\"agent_id\"}]",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Demo",
+      "attributes": {
+        "agent_id": [
+          "agent-alice-007"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "analyst"
+      ]
+    }
+  ]
+}

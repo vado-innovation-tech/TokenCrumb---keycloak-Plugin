@@ -246,7 +246,9 @@ Décision de conception : `0003-demo-en-profil-3b-via-extension-du-spi-keycloak.
 
 En plus de l'endpoint REST, l'extension fournit un **Protocol Mapper** OIDC (« Biscuit Emitter »,
 id `oidc-biscuit-mapper`) qui dépose le Biscuit **directement dans un claim du JWT** émis par
-Keycloak. Son intérêt : la config se fait **par client, dans l'admin console**, sans toucher au code.
+Keycloak. Son intérêt : **tout le mandat** se configure **par client, dans l'admin console** —
+audience, profil (y compris l'ancrage 3b par DPoP), droits par rôle, budget, durée de vie — sans
+variable d'environnement globale qui vaudrait pour tous les realms de l'instance.
 
 **Activer** : Clients → *votre client* → Client scopes → *…-dedicated* → Add mapper → By configuration
 → **Biscuit Emitter**. Champs disponibles :
@@ -255,10 +257,13 @@ Keycloak. Son intérêt : la config se fait **par client, dans l'admin console**
 |---|---|
 | **Claim name** (défaut `biscuit`) | nom du claim JWT portant le Biscuit (base64url) |
 | **Audience** | si non vide → fait `audience("...")` |
-| **Required profile** (`native` / `registry_backed`) | → fait `required_profile("...")`. Pas de `hardened_biscuit_anchored` ici : ce profil exige une clé d'agent ancrée, que cette voie ne peut pas poser — voir [Ancrer une clé d'agent](#ancrer-une-clé-dagent-profil-3b) |
+| **Required profile** (`native` / `registry_backed` / `hardened_biscuit_anchored`) | → fait `required_profile("...")`. En `hardened_biscuit_anchored`, la clé d'agent est celle de la **preuve DPoP** de la requête de token — voir [Profil 3b par DPoP](#profil-3b-par-dpop) |
+| **Role rights (JSON)** | droits d'outils par rôle : `[{"role":"analyst","tool":"list_tables","operation":"read"}]` (+ `"client"` pour un rôle client) → `right("list_tables","read")` si le JWT porte le rôle, et `rights_source("jwt_roles")`. Vide : table globale `BISCUIT_ROLE_RIGHTS` |
+| **Budget cap** | entier ≥ 0 → `budget_cap(N)` (entier Datalog) |
+| **Lifetime (seconds)** | durée de vie du Biscuit, plafonnée par `BISCUIT_TOKEN_TTL` et par l'expiration de l'access token |
 | **Extra facts** (éditeur clé→valeur) | faits custom `nom("valeur littérale")` ajoutés librement |
 | **Derived facts** (éditeur clé→valeur) | faits dérivés `nom → attribut Keycloak` : la valeur est **lue sur l'utilisateur** (ou son service-account) à l'émission |
-| **Add to access token / ID token** | où injecter le claim (access token par défaut) |
+| **Add to access token** | le claim n'est émis que dans l'access token |
 
 Le Biscuit ainsi émis porte **les mêmes faits cœur** que la voie REST (`user`, `realm_role`,
 `client_role`, `issuer`, `key_id`, `jti`, check d'expiration) **plus** les faits configurés. Les
@@ -266,7 +271,7 @@ champs ont des **niveaux de confiance distincts** (voir [Faits réservés](#fait
 
 | Champ | Voie | Provenance valeur | Faits gouvernés (`agent_id`, `audience`…) |
 |---|---|---|---|
-| **Audience / Required profile** | gouvernée (champ dédié) | fixée par l'admin du client | ✅ (champ nommé, validé) |
+| **Audience / Required profile / Budget cap / Role rights** | gouvernée (champ dédié) | fixée par l'admin du client | ✅ (champ nommé, validé) |
 | **Extra facts** | libre | texte libre per-client | ❌ refusés (ni cœur ni gouverné) |
 | **Derived facts** | gouvernée (attribut) | **attribut Keycloak de l'identité** | ✅ autorisés |
 
@@ -283,14 +288,53 @@ champs ont des **niveaux de confiance distincts** (voir [Faits réservés](#fait
 }
 ```
 
+> **Faits libres ≠ contrat de la gateway.** Un fait libre comme `ttl`, `token_budget` ou `tools` est
+> émis tel quel mais **aucune gateway ne l'interprète** : la durée de vie passe par *Lifetime*, le
+> budget par *Budget cap*, les outils par *Role rights*.
+
+### Profil 3b par DPoP
+
+Avec **Required profile = `hardened_biscuit_anchored`**, le mapper ancre la clé publique de l'agent
+dans le bloc *authority* : `agent_pubkey("ed25519/<hex>")` + `required_profile("hardened_biscuit_anchored")`.
+Cette clé est celle de la **preuve DPoP** ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449))
+jointe à la requête de token :
+
+1. Keycloak vérifie la preuve (signature, `htm`/`htu`, fraîcheur, anti-rejeu) et lie l'access token à
+   la clé (`cnf.jkt`) ;
+2. le mapper relit la clé dans l'en-tête `DPoP` et exige que son empreinte RFC 7638 soit **celle que
+   Keycloak a vérifiée** ; seule une clé **Ed25519** (`kty=OKP`, `crv=Ed25519`) est acceptée ;
+3. sans preuve, ou avec une clé d'un autre type, **l'émission du token échoue** (`500
+   unknown_error` côté client, `capability_denied` dans l'audit) : jamais de mandat non ancré présenté
+   comme 3b.
+
+Au **refresh**, Keycloak exige une nouvelle preuve de la même clé pour un client public : le mandat
+rafraîchi reste ancré sur la même clé. Côté agent, la même paire Ed25519 sert à la preuve DPoP et à
+l'attestation d'appel présentée à la gateway.
+
+Configuration du client : activer **Advanced → Require DPoP bound tokens**
+(`dpop.bound.access.tokens=true`), pour que Keycloak refuse lui-même une requête sans preuve. Exemple
+de requête :
+
+```http
+POST /realms/demo/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+DPoP: eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVkRFNBIiwiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4Ijoi…
+
+grant_type=password&client_id=agent-cli&username=alice&password=…
+```
+
+`BiscuitMapperDPoPIT` couvre ce parcours de bout en bout sur un vrai Keycloak (preuve Ed25519, droits
+et budget du mapper, TTL, refresh, refus sans preuve et refus d'une clé EC).
+
 **REST vs mapper** — les deux coexistent, choisissez selon le besoin :
 
 | | REST `/biscuit/token` | Protocol Mapper |
 |---|---|---|
-| Obtention | échange explicite à la demande | claim dans le JWT, dès le login/refresh |
+| Obtention | échange explicite à la demande | claim dans l'access token, dès le login/refresh |
 | Appels | 2 (login + échange) | 1 (login) |
-| Config des faits | globale (`BISCUIT_EXTRA_FACTS`, au démarrage) | **par client, dans l'UI** |
-| Durée de vie | `BISCUIT_TOKEN_TTL` | idem (calée sur le cycle du JWT) |
+| Config des faits et droits | globale (`BISCUIT_*`, au démarrage, tous realms) | **par client, dans l'UI** |
+| Ancrage 3b | corps `{"agent_pubkey": …}` | preuve DPoP Ed25519 |
+| Durée de vie | `BISCUIT_TOKEN_TTL` | *Lifetime*, plafonnée par `BISCUIT_TOKEN_TTL` |
 
 > Le mapper **émet** seulement ; l'`audience`/`required_profile` doivent être **vérifiés côté
 > gateway** (anti-downgrade). Mettre un Biscuit dans le JWT en augmente la taille (compact,

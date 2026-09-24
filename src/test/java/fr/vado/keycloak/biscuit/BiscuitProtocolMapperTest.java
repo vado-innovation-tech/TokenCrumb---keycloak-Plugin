@@ -126,20 +126,56 @@ class BiscuitProtocolMapperTest {
         assertTrue(names.contains(BiscuitProtocolMapper.REQUIRED_PROFILE), names.toString());
         assertTrue(names.contains(BiscuitProtocolMapper.EXTRA_FACTS), names.toString());
         assertTrue(names.contains(BiscuitProtocolMapper.DERIVED_FACTS), names.toString());
+        assertTrue(names.containsAll(List.of(BiscuitProtocolMapper.ROLE_RIGHTS,
+                BiscuitProtocolMapper.BUDGET_CAP, BiscuitProtocolMapper.TTL)), names.toString());
         // les cases "Add to access token / ID token" sont bien ajoutées par le helper Keycloak
         assertTrue(names.contains(OIDCAttributeMapperHelper.INCLUDE_IN_ACCESS_TOKEN), names.toString());
     }
 
     @Test
-    void theProfileListNeverOffersAProfileThisPathCannotHonour() {
-        // Cette voie ne peut pas ancrer de clé (agent_pubkey est RESERVED_CORE sur toute voie de
-        // config) : proposer hardened_biscuit_anchored ne produirait que des mandats refusés à
-        // chaque appel par la gateway (« profile downgrade »). Seul POST /biscuit/token y donne accès.
+    void theProfileListOffersAnchoringThroughDPoP() {
         List<String> options = mapper.getConfigProperties().stream()
                 .filter(p -> BiscuitProtocolMapper.REQUIRED_PROFILE.equals(p.getName()))
                 .findFirst().orElseThrow().getOptions();
-        assertFalse(options.contains(BiscuitFacts.ANCHORED_PROFILE), options.toString());
-        assertEquals(List.of("native", "registry_backed"), options);
+        assertEquals(List.of("native", "registry_backed", BiscuitFacts.ANCHORED_PROFILE), options);
+    }
+
+    @Test
+    void anchoredProfileIsNeverEmittedFromConfigAlone() {
+        // Le profil 3b n'est posé qu'avec la clé DPoP (BiscuitFacts.anchored), jamais seul.
+        Map<String, String> cfg = Map.of(BiscuitProtocolMapper.REQUIRED_PROFILE, BiscuitFacts.ANCHORED_PROFILE);
+        assertTrue(facts(cfg).isEmpty());
+        assertTrue(BiscuitProtocolMapper.anchored(cfg));
+        assertFalse(BiscuitProtocolMapper.anchored(Map.of(BiscuitProtocolMapper.REQUIRED_PROFILE, "native")));
+    }
+
+    @Test
+    void budgetCapIsAnIntegerGovernedFact() {
+        List<BiscuitMinter.FactSpec> facts = facts(Map.of(BiscuitProtocolMapper.BUDGET_CAP, " 50 "));
+        assertEquals(List.of(new BiscuitMinter.FactSpec("budget_cap", List.of("50"))), facts);
+        assertThrows(IllegalArgumentException.class, () -> facts(Map.of(BiscuitProtocolMapper.BUDGET_CAP, "-1")));
+        assertThrows(IllegalArgumentException.class, () -> facts(Map.of(BiscuitProtocolMapper.BUDGET_CAP, "cinquante")));
+        assertTrue(facts(Map.of(BiscuitProtocolMapper.BUDGET_CAP, "")).isEmpty());
+    }
+
+    @Test
+    void lifetimeIsCappedByTheGlobalTtl() {
+        assertEquals(300, BiscuitProtocolMapper.ttlSeconds(Map.of(), 300));
+        assertEquals(100, BiscuitProtocolMapper.ttlSeconds(Map.of(BiscuitProtocolMapper.TTL, "100"), 300));
+        assertEquals(300, BiscuitProtocolMapper.ttlSeconds(Map.of(BiscuitProtocolMapper.TTL, "7200"), 300));
+        assertThrows(IllegalArgumentException.class, () -> BiscuitProtocolMapper.ttlSeconds(Map.of(BiscuitProtocolMapper.TTL, "0"), 300));
+        assertThrows(IllegalArgumentException.class, () -> BiscuitProtocolMapper.ttlSeconds(Map.of(BiscuitProtocolMapper.TTL, "1h"), 300));
+    }
+
+    @Test
+    void roleRightsAreReadPerMapperOrFallBackToGlobal() {
+        assertEquals(null, BiscuitProtocolMapper.roleRights(Map.of()));
+        assertEquals(null, BiscuitProtocolMapper.roleRights(Map.of(BiscuitProtocolMapper.ROLE_RIGHTS, " ")));
+        assertEquals(List.of(new RoleRights.Grant("analyst", null, "list_tables", "read")),
+                BiscuitProtocolMapper.roleRights(Map.of(BiscuitProtocolMapper.ROLE_RIGHTS,
+                        "[{\"role\":\"analyst\",\"tool\":\"list_tables\",\"operation\":\"read\"}]")));
+        assertThrows(IllegalArgumentException.class, () -> BiscuitProtocolMapper.roleRights(Map.of(
+                BiscuitProtocolMapper.ROLE_RIGHTS, "[{\"role\":\"analyst\",\"tool\":\"x\",\"operation\":\"read\",\"extra\":1}]")));
     }
 
     @Test

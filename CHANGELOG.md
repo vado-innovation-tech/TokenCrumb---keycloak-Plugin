@@ -5,6 +5,20 @@ Toutes les évolutions notables de `keycloak-biscuit-exchange`. Format inspiré 
 
 ## [Non publié]
 
+### Mapper complet — profil 3b par DPoP, droits, budget et durée de vie par client
+- **Ancrage par DPoP (RFC 9449)** : le mapper propose `hardened_biscuit_anchored`. La clé d'agent est
+  celle de la preuve DPoP de la requête de token, dont Keycloak a vérifié la signature ; le mapper relit
+  la clé dans l'en-tête `DPoP` et exige que son empreinte RFC 7638 soit celle que Keycloak a vérifiée
+  (`DPoPAnchor`). Seule une clé Ed25519 est acceptée. Sans preuve ou avec une autre clé, l'émission du
+  token échoue. Le refresh d'un client public conserve la clé ancrée.
+- **Nouveaux champs** : *Role rights (JSON)* (table rôle → droits propre au client, remplace
+  `BISCUIT_ROLE_RIGHTS` quand renseignée), *Budget cap* (`budget_cap(N)`), *Lifetime (seconds)*
+  (plafonnée par `BISCUIT_TOKEN_TTL` et l'expiration du JWT). Tout le mandat se configure par client,
+  sans variable globale valant pour tous les realms.
+- `BiscuitMapperDPoPIT` : parcours complet sur Keycloak 26.4.7 (preuve Ed25519 réelle, droits et budget
+  du mapper, TTL, refresh, refus sans preuve, refus d'une clé EC) ; `DPoPAnchorTest` vérifie l'empreinte
+  contre un calcul RFC 7638 indépendant.
+
 ### Durcissement — corrections de l'audit du 9 septembre 2026 (rupture)
 - **Table rôle → droits** (`BISCUIT_ROLE_RIGHTS`, classe `RoleRights`) : `right("<tool>","<op>")` n'est
   émis que pour les rôles du JWT explicitement associés ; aucun droit par défaut. Fait
