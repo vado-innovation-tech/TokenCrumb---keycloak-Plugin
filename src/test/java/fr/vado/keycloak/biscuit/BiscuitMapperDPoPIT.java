@@ -50,7 +50,7 @@ class BiscuitMapperDPoPIT {
 
     @BeforeAll
     static void startKeycloak() {
-        keycloak = new KeycloakContainer("quay.io/keycloak/keycloak:26.4.7")
+        keycloak = new KeycloakContainer(System.getProperty("keycloak.image", "quay.io/keycloak/keycloak:26.4.7"))
                 .withRealmImportFile("/biscuit-dpop-realm.json")
                 .withEnv("BISCUIT_ALLOW_KEY_BOOTSTRAP", "true")
                 // Table globale volontairement différente : le mapper doit la remplacer par la sienne.
