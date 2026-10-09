@@ -714,5 +714,5 @@ rather than in a public issue. See [SECURITY.md](SECURITY.md).
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 Antonin Alves. See
+Licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 Vado Innovation. See
 [NOTICE](NOTICE) for bundled third-party software.
