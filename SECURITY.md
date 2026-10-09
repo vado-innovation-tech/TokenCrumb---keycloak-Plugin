@@ -12,7 +12,8 @@ Please **do not open a public issue** for a security vulnerability.
 
 Report it privately through GitHub's private vulnerability reporting: on the
 [repository](https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin), open the
-**Security** tab and click **Report a vulnerability**.
+**Security** tab and click **Report a vulnerability**. If you cannot use it, email
+[security@tokencrumb.ai](mailto:security@tokencrumb.ai).
 
 Include as much as you can: affected version, configuration (key strategy, issuance path — REST
 exchange or protocol mapper), steps to reproduce, and the impact you observed.

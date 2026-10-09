@@ -710,7 +710,8 @@ are ephemeral and have no value outside the tests.
 
 Please report vulnerabilities privately through GitHub's
 [private vulnerability reporting](https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin/security/advisories/new)
-rather than in a public issue. See [SECURITY.md](SECURITY.md).
+rather than in a public issue. If you cannot use it, email
+[security@tokencrumb.ai](mailto:security@tokencrumb.ai). See [SECURITY.md](SECURITY.md).
 
 ## License
 
