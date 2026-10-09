@@ -713,6 +713,23 @@ Please report vulnerabilities privately through GitHub's
 rather than in a public issue. If you cannot use it, email
 [security@tokencrumb.ai](mailto:security@tokencrumb.ai). See [SECURITY.md](SECURITY.md).
 
+## Funding
+
+<p>
+  <img src="docs/assets/funding/france2030.png" alt="France 2030" height="56">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/funding/nextgenerationeu-dark.png">
+    <img src="docs/assets/funding/nextgenerationeu.png" alt="Financé par l'Union européenne – NextGenerationEU" height="56">
+  </picture>
+  <img src="docs/assets/funding/capdigital.png" alt="Cap Digital" height="56">
+</p>
+
+Ce projet a été financé par le Gouvernement dans le cadre du plan France 2030
+opéré par Cap Digital et financé par l'Union européenne – NextGeneration EU.
+
+This project was funded by the French Government as part of the France 2030
+plan operated by Cap Digital, and by the European Union – NextGenerationEU.
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 Vado Innovation. See
