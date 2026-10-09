@@ -22,11 +22,18 @@
     </license>
   </licenses>
 
+  <organization>
+    <name>Vado Innovation</name>
+    <url>https://www.vado-innovation.tech</url>
+  </organization>
+
   <developers>
     <developer>
-      <id>Als0m3</id>
-      <name>Antonin Alves</name>
-      <email>antonin@alors-la.fr</email>
+      <id>vado-innovation-tech</id>
+      <name>Vado Innovation</name>
+      <email>security@tokencrumb.ai</email>
+      <organization>Vado Innovation</organization>
+      <organizationUrl>https://www.vado-innovation.tech</organizationUrl>
     </developer>
   </developers>
 
