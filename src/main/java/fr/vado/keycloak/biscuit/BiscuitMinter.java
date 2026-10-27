@@ -36,6 +36,7 @@ import java.util.UUID;
  *   audience("&lt;aud&gt;");                     // governed facts, when configured
  *   required_profile("&lt;profile&gt;");         // always present: "native" unless configured or anchored
  *   agent_pubkey("ed25519/&lt;hex&gt;");          // anchored exchanges only
+ *   agent_id("ed25519:&lt;16 hex&gt;");            // anchored exchanges: derived from the key
  *   budget_cap(&lt;integer&gt;);                 // when configured
  *   right("&lt;tool&gt;", "&lt;operation&gt;");       // one per granted right (role mapping or static mode)
  *   rights_source("jwt_roles" | "static_deployer");
@@ -57,7 +58,8 @@ import java.util.UUID;
  *
  * Security: values taken from claims (sub, azp, roles) as well as extra-fact values go
  * through the programmatic fact API (never concatenated into Datalog source), which
- * neutralizes any injection. Only the expiry check — built from a locally computed
+ * neutralizes any injection; a value holding a quote or a backslash is refused
+ * ({@link GrantException}) because a gateway would refuse the mandate. Only the expiry check — built from a locally computed
  * timestamp — is written as Datalog source.
  */
 public final class BiscuitMinter {
@@ -115,6 +117,25 @@ public final class BiscuitMinter {
         }
     }
 
+    /**
+     * The access token cannot yield a usable mandate ({@code invalid_grant}): no right would be
+     * written, or a value holds a character a gateway reads ambiguously.
+     */
+    public static final class GrantException extends RuntimeException {
+        public GrantException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Refuses a quote or a backslash: the value would be signed intact, but a gateway that matches
+     * facts textually refuses it ({@code check_unambiguous}), so the mandate would be unusable.
+     */
+    static void unambiguous(String claim, String value) {
+        if (value != null && (value.indexOf('"') >= 0 || value.indexOf('\\') >= 0))
+            throw new GrantException(claim + " holds a quote or a backslash");
+    }
+
     public static MintResult mint(AccessToken token, KeyPair rootKey, long ttlSeconds, Instant now)
             throws Error {
         return mint(token, rootKey, null, ttlSeconds, now, List.of());
@@ -167,6 +188,16 @@ public final class BiscuitMinter {
 
         if (sub.length() > 256 || !sub.equals(sub.trim()) || sub.chars().anyMatch(c -> c < 32))
             throw new IllegalArgumentException("invalid subject");
+        unambiguous("sub", sub);
+        unambiguous("azp", token.getIssuedFor());
+        unambiguous("iss", token.getIssuer());
+        for (String role : realmRoles(token)) unambiguous("realm role", role);
+        if (token.getResourceAccess() != null) for (var entry : token.getResourceAccess().entrySet()) {
+            unambiguous("client id", entry.getKey());
+            if (entry.getValue() != null && entry.getValue().getRoles() != null)
+                for (String role : entry.getValue().getRoles()) unambiguous("client role", role);
+        }
+        for (var f : extraFacts) for (String v : f.values()) unambiguous(f.name(), v);
         long roleCount = realmRoles(token).size();
         if (token.getResourceAccess() != null) for (var access : token.getResourceAccess().values())
             if (access != null && access.getRoles() != null) roleCount += access.getRoles().size();

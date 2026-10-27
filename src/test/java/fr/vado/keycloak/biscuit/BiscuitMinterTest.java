@@ -138,14 +138,13 @@ class BiscuitMinterTest {
     }
 
     @Test
-    void extraFactValuesCannotInjectDatalog() throws Exception {
-        // a malicious value stays a string literal, never Datalog source
-        BiscuitMinter.MintResult result = BiscuitMinter.mint(
-                token("u", "c", NOW.getEpochSecond() + 3600), ROOT, 300, NOW,
-                List.of(new BiscuitMinter.FactSpec("audience", List.of("x\"); role(\"hacker"))));
-        Biscuit parsed = Biscuit.from_b64url(result.biscuitB64(), ROOT.public_key());
-        assertThrows(Error.FailedLogic.class, () -> parsed.authorizer()
-                .add_fact(NOW_TIME_FACT).add_check("check if role(\"hacker\")").allow().authorize(TEST_LIMITS));
+    void ambiguousExtraFactValuesAreRefused() {
+        // a gateway refuses a quote or a backslash in a fact: the mandate would be unusable
+        for (String value : List.of("x\"); role(\"hacker", "a\\b")) {
+            assertThrows(BiscuitMinter.GrantException.class, () -> BiscuitMinter.mint(
+                    token("u", "c", NOW.getEpochSecond() + 3600), ROOT, 300, NOW,
+                    List.of(new BiscuitMinter.FactSpec("tenant_id", List.of(value)))), value);
+        }
     }
 
     @Test
@@ -179,18 +178,24 @@ class BiscuitMinterTest {
     }
 
     @Test
-    void claimValuesCannotInjectDatalog() throws Exception {
-        // a malicious sub must end up as a plain string literal, not as Datalog source
+    void ambiguousClaimValuesAreRefused() {
         String evil = "x\"); role(\"hacker";
-        BiscuitMinter.MintResult result =
-                BiscuitMinter.mint(token(evil, null, NOW.getEpochSecond() + 3600), ROOT, 300, NOW);
-        Biscuit parsed = Biscuit.from_b64url(result.biscuitB64(), ROOT.public_key());
+        assertThrows(BiscuitMinter.GrantException.class, () ->
+                BiscuitMinter.mint(token(evil, null, NOW.getEpochSecond() + 3600), ROOT, 300, NOW));
+        assertThrows(BiscuitMinter.GrantException.class, () ->
+                BiscuitMinter.mint(token("u", "c\\d", NOW.getEpochSecond() + 3600), ROOT, 300, NOW));
+        AccessToken roles = token("u", "c", NOW.getEpochSecond() + 3600);
+        AccessToken.Access realm = new AccessToken.Access();
+        realm.addRole("re\"ader");
+        roles.setRealmAccess(realm);
+        assertThrows(BiscuitMinter.GrantException.class, () -> BiscuitMinter.mint(roles, ROOT, 300, NOW));
+    }
 
-        // the token remains verifiable as usual…
-        parsed.authorizer().add_fact(NOW_TIME_FACT).allow().authorize(TEST_LIMITS);
-        // …but no role("hacker") fact was created: requiring it must fail
-        assertThrows(Error.FailedLogic.class, () -> parsed.authorizer()
-                .add_fact(NOW_TIME_FACT).add_check("check if role(\"hacker\")").allow().authorize(TEST_LIMITS));
+    @Test
+    void aMandateWithoutRightIsRefused() {
+        assertThrows(BiscuitMinter.GrantException.class, () -> BiscuitFacts.requireRight(
+                List.of(new BiscuitMinter.FactSpec("audience", List.of("https://gateway.example")))));
+        BiscuitFacts.requireRight(List.of(new BiscuitMinter.FactSpec("right", List.of("read_file", "read"))));
     }
 
     // ---- root_key_id and revocation identifiers ----

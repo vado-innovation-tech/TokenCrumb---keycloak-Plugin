@@ -158,7 +158,10 @@ class BiscuitMapperDPoPIT {
         assertTrue(printed.contains("required_profile(\"hardened_biscuit_anchored\")"), printed);
         assertFalse(printed.contains("required_profile(\"native\")"), printed);
         assertTrue(printed.contains("audience(\"https://demo.gateway.example\")"), printed);
-        assertTrue(printed.contains("agent_id(\"agent-alice-007\")"), printed);
+        // anchored: the agent is named by its key, the attribute-derived agent_id is replaced
+        byte[] keyDigest = java.security.MessageDigest.getInstance("SHA-256").digest(rawEd25519(agent));
+        assertTrue(printed.contains("agent_id(\"ed25519:" + HexFormat.of().formatHex(keyDigest, 0, 8) + "\")"), printed);
+        assertFalse(printed.contains("agent-alice-007"), printed);
         assertTrue(printed.contains("budget_cap(7)"), printed);
         // The mapper's table, not the global table.
         assertTrue(printed.contains("right(\"list_tables\", \"read\")"), printed);

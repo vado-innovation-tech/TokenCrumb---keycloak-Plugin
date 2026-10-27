@@ -179,6 +179,8 @@ Exchanges a valid Keycloak access token for a Biscuit.
 - **Errors**: `401 {"error":"invalid_token"}` (JWT missing, invalid, expired or without a
   session), `400 {"error":"invalid_request"}` (JWT without a `sub` claim, malformed or non-object
   body, unknown field), `400 {"error":"invalid_agent_pubkey"}` (agent key supplied but malformed),
+  `400 {"error":"invalid_grant"}` (no `right` fact would be written, or a claim or fact value
+  holds a quote `"` or a backslash `\`, which a gateway refuses as ambiguous),
   `404 {"error":"not_found"}` (extension disabled), `503 {"error":"biscuit_unavailable"}` (root key
   unavailable), `500 {"error":"internal_error"}` (unexpected error; details only in the server
   logs).
@@ -312,6 +314,10 @@ Response codes:
 | malformed key, non-string or `null` | `400 invalid_agent_pubkey` |
 | malformed JSON, non-object, duplicate key or unknown field | `400 invalid_request` |
 
+An anchored mandate also names its agent by the key: `agent_id("ed25519:<16 hex>")`, the first
+16 hex characters of SHA-256 over the raw 32-byte key, as the TokenCrumb Exchange does. A
+configured or attribute-derived `agent_id` is replaced.
+
 A **supplied** key is therefore never silently ignored: the requester can never receive a `200`
 that it would mistake for an anchored mandate when nothing was actually anchored.
 
@@ -385,6 +391,14 @@ in the authority block: `agent_pubkey("ed25519/<hex>")` and
 3. without a proof, or with a key of another type, **token issuance fails** (the client gets
    `500 unknown_error` and the audit log records `capability_denied`): an unanchored mandate is
    never presented as anchored.
+
+The mandate names the agent by its key (`agent_id("ed25519:<16 hex>")`, see
+[Anchoring an agent key](#anchoring-an-agent-key)); an `agent_id` derived from an attribute is replaced.
+
+When the user's token cannot yield a usable mandate (no `right` fact, or a quote or backslash in
+a value), the access token is issued **without** the Biscuit claim and the audit log records
+`capability_denied` with reason `invalid_grant`: sign-in is not refused for a user who simply has
+no rights.
 
 For a public client, Keycloak requires a new proof from the same key on **refresh**, so the
 refreshed mandate stays anchored to that key. The agent uses the same Ed25519 key pair for the
@@ -540,8 +554,8 @@ ignored.
 
 Static mode also applies to the protocol mapper, but the mapper never reads
 `BISCUIT_EXTRA_FACTS`: unless the mapper defines its own *Role rights* (which are always
-evaluated against the JWT roles, with `rights_source("jwt_roles")`), mapper-issued tokens carry
-no `right` facts, only `rights_source("static_deployer")`.
+evaluated against the JWT roles, with `rights_source("jwt_roles")`), a mapper-issued mandate
+would carry no `right` fact, so the mapper issues none (`capability_denied`, `invalid_grant`).
 
 ### Reserved facts
 
@@ -585,7 +599,8 @@ Each issued Biscuit (REST or mapper) produces **one structured log line** in the
 
 `path` is `rest` or `mapper`; `revocation_id` is the authority block's revocation identifier
 (lowercase hex), on both paths; absent values are omitted. Rejections produce a
-`capability_denied` line at `WARN` level, with `path` and `reason`. Values are escaped by the
+`capability_denied` line at `WARN` level, with `path` and `reason` (on the REST path, the error
+code returned: `invalid_request`, `invalid_agent_pubkey`, `invalid_grant`, `invalid_token`). Values are escaped by the
 JSON serializer. To see it in the demo: `docker compose logs keycloak | grep capability_issued`.
 
 > This is a usable issuance trail, **not** a tamper-proof log: no hash chaining, no signature,

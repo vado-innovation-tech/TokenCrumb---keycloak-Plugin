@@ -205,6 +205,7 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
                         DPoPAnchor.agentPubkey(header, proof == null ? null : proof.getThumbprint()));
             }
 
+            BiscuitFacts.requireRight(facts);
             RealmModel realm = session.getContext().getRealm();
             BiscuitKeyManager.RootKey root = BiscuitKeyManager.rootKey(session, realm, globalConfig);
             BiscuitMinter.MintResult result =
@@ -213,6 +214,10 @@ public class BiscuitProtocolMapper extends AbstractOIDCProtocolMapper
 
             accessToken.getOtherClaims().put(claimName(cfg), result.biscuitB64());
             BiscuitAudit.logIssued("mapper", realm.getName(), result.audit());
+        } catch (BiscuitMinter.GrantException e) {
+            // Not a configuration error: this user's token cannot yield a usable mandate. The
+            // access token is issued without the claim rather than refusing the sign-in.
+            BiscuitAudit.logDenied("mapper", "invalid_grant");
         } catch (Exception e) {
             // Fail closed: an invalid mapper configuration refuses token issuance.
             BiscuitAudit.logDenied("mapper", "invalid_issuance");

@@ -6,6 +6,16 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this proj
 
 ## [Unreleased]
 
+### Changed
+
+- Issuance refuses a mandate without any `right` fact and a claim or fact value holding a quote
+  or a backslash, which a gateway refuses as ambiguous: `400 invalid_grant` on the REST endpoint;
+  on the mapper path the access token is issued without the Biscuit claim. Aligned with the
+  TokenCrumb Exchange.
+- An anchored mandate carries `agent_id("ed25519:<16 hex>")`, derived from the agent key
+  (SHA-256 of the raw key), replacing a configured or attribute-derived `agent_id`.
+- Every refused REST exchange logs `capability_denied` with the returned error code as reason.
+
 ## [0.1.0] — 2026-10-06
 
 Initial release.
