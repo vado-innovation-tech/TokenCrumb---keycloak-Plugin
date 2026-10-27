@@ -95,10 +95,11 @@ public class BiscuitResource {
             try {
                 facts = config.authorizedFacts(auth.getToken(), factsFor(body));
             } catch (InvalidRequestException e) {
-                return error(Response.Status.BAD_REQUEST, e.code());
+                return denied(e.code());
             }
 
             try {
+                BiscuitFacts.requireRight(facts);
                 BiscuitKeyManager.RootKey rootKey = BiscuitKeyManager.rootKey(session, realm, config);
                 BiscuitMinter.MintResult result =
                         BiscuitMinter.mint(auth.getToken(), rootKey.keyPair(), rootKey.keyId(),
@@ -106,7 +107,10 @@ public class BiscuitResource {
                 BiscuitAudit.logIssued("rest", realm.getName(), result.audit());
                 return withCors(Response.ok(tokenResponse(result)));
             } catch (BiscuitMinter.MissingSubjectException e) {
-                return error(Response.Status.BAD_REQUEST, "invalid_request");
+                return denied("invalid_request");
+            } catch (BiscuitMinter.GrantException e) {
+                LOG.debugf("Biscuit exchange refused: %s", e.getMessage());
+                return denied("invalid_grant");
             }
         });
     }
@@ -230,6 +234,12 @@ public class BiscuitResource {
 
     private List<BiscuitMinter.FactSpec> factsFor(String body) {
         return factsFor(body, config.extraFacts());
+    }
+
+    /** {@code 400} for a refused exchange, with its {@code capability_denied} audit line. */
+    private Response denied(String code) {
+        BiscuitAudit.logDenied("rest", code);
+        return error(Response.Status.BAD_REQUEST, code);
     }
 
     private Response error(Response.Status status, String code) {

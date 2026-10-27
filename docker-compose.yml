@@ -18,6 +18,10 @@ services:
       # declares one here.
       BISCUIT_EXTRA_FACTS: >-
         [{"name":"audience","values":["https://gateway.example"]}]
+      # A mandate without any right is refused (invalid_grant): grant the demo roles something.
+      BISCUIT_ROLE_RIGHTS: >-
+        [{"role":"admin","tool":"list_tables","operation":"read"},
+         {"role":"orders:read","client":"demo-cli","tool":"orders","operation":"read"}]
       # Uncomment to encrypt the persisted seed (AES-256-GCM):
       # BISCUIT_KEY_ENCRYPTION_KEY: "<64 hex characters or base64 of 32 bytes>"
     ports:

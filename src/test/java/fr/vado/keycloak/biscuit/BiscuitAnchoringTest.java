@@ -40,6 +40,16 @@ class BiscuitAnchoringTest {
                 .findFirst().orElse(null);
     }
 
+    @Test
+    void anchoringNamesTheAgentByItsKey() {
+        // Same derivation as the TokenCrumb Exchange: "ed25519:" + 16 hex of SHA-256(raw key).
+        List<BiscuitMinter.FactSpec> facts = BiscuitFacts.anchored(
+                List.of(new BiscuitMinter.FactSpec("agent_id", List.of("configured"))),
+                BiscuitFacts.requested(KEY).orElseThrow());
+        assertEquals(List.of(List.of("ed25519:9a2db2e23f1504cd")), facts.stream()
+                .filter(f -> "agent_id".equals(f.name())).map(BiscuitMinter.FactSpec::values).toList());
+    }
+
     // ------------------------------------------------------------------ //
     // BiscuitFacts.requested: the only path that accepts agent_pubkey
     // ------------------------------------------------------------------ //
@@ -102,7 +112,7 @@ class BiscuitAnchoringTest {
     void otherConfiguredFactsAreKept() {
         List<BiscuitMinter.FactSpec> configured = List.of(
                 new BiscuitMinter.FactSpec("audience", List.of("gw-paris")),
-                new BiscuitMinter.FactSpec("agent_id", List.of("agent-1")));
+                new BiscuitMinter.FactSpec("tenant_id", List.of("acme")));
         List<BiscuitMinter.FactSpec> facts =
                 BiscuitFacts.anchored(configured, BiscuitFacts.requested(KEY).orElseThrow());
         assertTrue(facts.containsAll(configured), facts.toString());

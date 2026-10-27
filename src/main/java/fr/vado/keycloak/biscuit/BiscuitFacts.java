@@ -119,16 +119,37 @@ public final class BiscuitFacts {
                                                         BiscuitMinter.FactSpec agentPubkey) {
         List<BiscuitMinter.FactSpec> out = new java.util.ArrayList<>();
         for (BiscuitMinter.FactSpec fact : configured == null ? List.<BiscuitMinter.FactSpec>of() : configured) {
-            if ("required_profile".equals(fact.name())) {
-                LOG.debugf("Biscuit exchange: overriding configured required_profile '%s' "
-                        + "because an agent key is anchored", fact.values());
+            if ("required_profile".equals(fact.name()) || "agent_id".equals(fact.name())) {
+                LOG.debugf("Biscuit exchange: overriding configured %s '%s' "
+                        + "because an agent key is anchored", fact.name(), fact.values());
                 continue;
             }
             out.add(fact);
         }
         out.add(agentPubkey);
+        out.add(new BiscuitMinter.FactSpec("agent_id", List.of(agentIdFor(agentPubkey.values().get(0)))));
         out.add(new BiscuitMinter.FactSpec("required_profile", List.of(ANCHORED_PROFILE)));
         return List.copyOf(out);
+    }
+
+    /**
+     * Name of an anchored agent, identical to the TokenCrumb Exchange: {@code ed25519:} followed by
+     * the first 16 hex characters of SHA-256 over the raw 32-byte public key.
+     */
+    static String agentIdFor(String agentPubkey) {
+        byte[] raw = java.util.HexFormat.of().parseHex(agentPubkey.substring("ed25519/".length()));
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(raw);
+            return "ed25519:" + java.util.HexFormat.of().formatHex(digest, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    /** Refuses a mandate without any {@code right} fact: no gateway call could be allowed. */
+    static void requireRight(List<BiscuitMinter.FactSpec> facts) {
+        if (facts.stream().noneMatch(f -> f.name().equals("right")))
+            throw new BiscuitMinter.GrantException("no role of the access token grants a right");
     }
 
     static void checkUnique(List<BiscuitMinter.FactSpec> facts) {
