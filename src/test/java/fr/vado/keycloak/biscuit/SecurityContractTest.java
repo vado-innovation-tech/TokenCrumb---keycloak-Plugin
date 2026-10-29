@@ -19,6 +19,13 @@ class SecurityContractTest {
             assertThrows(IllegalArgumentException.class, () -> BiscuitConfig.parseExtraFacts(bad), bad);
         assertThrows(IllegalArgumentException.class, () -> BiscuitConfig.from(Map.of("BISCUIT_ENABLED", "treu")));
     }
+    @Test void gatewayContextFactsAreReservedCore() {
+        // CONTEXT_FACTS of the gateway contract (tokencrumb-mcp-proxy, token_contract.rs): a mandate that
+        // declares one of them is refused as a whole, so the extension must never issue them.
+        for (String name : List.of("time", "operation", "tool", "upstream", "resource", "budget", "delegation_depth",
+                "arg", "call_signature_valid", "nonce_fresh", "arguments_bound", "capability_bound"))
+            assertTrue(BiscuitFacts.RESERVED_CORE.contains(name), name);
+    }
     @Test void bodyDuplicatesAndNullCannotUnbindAnAgent() {
         for (String bad : List.of("{\"agent_pubkey\":null}", "{\"agent_pubkey\":null,\"agent_pubkey\":\"x\"}", "{agent_pubkey:'x'}"))
             assertThrows(BiscuitResource.InvalidRequestException.class, () -> BiscuitResource.factsFor(bad, List.of()));

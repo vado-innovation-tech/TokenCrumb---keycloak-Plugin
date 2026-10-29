@@ -48,7 +48,7 @@ public final class BiscuitFacts {
      */
     static final Set<String> RESERVED_CORE = Set.of(
             "user", "client", "issuer", "realm_role", "client_role", "jti", "time",
-            "key_id", "agent_pubkey", "max_delegation_depth", "expires_at", "operation", "upstream",
+            "key_id", "agent_pubkey", "max_delegation_depth", "expires_at", "operation", "tool", "upstream",
             "resource", "budget", "delegation_depth", "arg", "call_signature_valid", "nonce_fresh", "arguments_bound", "capability_bound");
 
     /**

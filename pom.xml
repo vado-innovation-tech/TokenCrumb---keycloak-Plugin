@@ -6,7 +6,7 @@
 
   <groupId>fr.vado.tokencrumb</groupId>
   <artifactId>tokencrumb-keycloak-plugin</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
   <packaging>jar</packaging>
 
   <name>TokenCrumb — Keycloak Plugin</name>
