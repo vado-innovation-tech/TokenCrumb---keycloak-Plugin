@@ -551,8 +551,8 @@ To protect the security semantics, three sets of names cannot be configured free
   `expires_at`, issued by the extension itself, and `agent_pubkey`, `max_delegation_depth`,
   reserved for anchoring (`agent_pubkey`) and future delegation support
   (`max_delegation_depth`). The names a gateway authorizer supplies as
-  request context are core as well: `time`, `operation`, `resource`, `arg`, `budget`, `upstream`,
-  `delegation_depth`, `call_signature_valid`, `nonce_fresh`, `arguments_bound`,
+  request context are core as well: `time`, `operation`, `tool`, `resource`, `arg`, `budget`,
+  `upstream`, `delegation_depth`, `call_signature_valid`, `nonce_fresh`, `arguments_bound`,
   `capability_bound`; the issuer therefore cannot pre-populate them. **Core facts are rejected
   on every configuration path.** The only exception, through a separate channel: `agent_pubkey`
   supplied **in the body of an authenticated exchange request** (see

@@ -63,6 +63,17 @@ class BiscuitProtocolMapperTest {
     }
 
     @Test
+    void mapTypeCannotSetTheGatewayToolFact() {
+        // `tool` is request context supplied by the gateway: a mandate declaring it is refused there
+        Map<String, List<String>> raw = new HashMap<>();
+        raw.put("tool", List.of("read_file"));
+        Map<String, String> cfg = new HashMap<>();
+        cfg.put(BiscuitProtocolMapper.EXTRA_FACTS, MapperTypeSerializer.serialize(raw));
+
+        assertThrows(IllegalArgumentException.class, () -> facts(cfg));
+    }
+
+    @Test
     void mapTypeCannotForgeGovernedFacts() {
         // the free-form per-client map can set neither core nor governed facts: a required_profile/audience
         // cannot be forged this way (they go through their dedicated field).

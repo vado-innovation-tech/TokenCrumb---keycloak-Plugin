@@ -6,6 +6,15 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this proj
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-10-29
+
+### Fixed
+
+- **`tool` is a reserved core fact.** It is a request-context fact supplied by the gateway
+  authorizer, like `operation` and `resource`, but 0.1.0 accepted it as a free fact: the extension
+  then issued a Biscuit that the gateway refuses as a whole, and the error only surfaced at the
+  first tool call. `tool` is now rejected on every configuration path, at configuration time.
+
 ## [0.1.0] — 2026-10-06
 
 Initial release.
@@ -92,5 +101,6 @@ Initial release.
   computation saturates instead of overflowing.
 - Error responses never include internal details; they are only written to the server logs.
 
-[Unreleased]: https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/vado-innovation-tech/TokenCrumb---keycloak-Plugin/releases/tag/v0.1.0

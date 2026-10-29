@@ -123,7 +123,7 @@ class BiscuitConfigTest {
 
     @Test
     void extraFactsRejectInvalidAndReservedNames() {
-        for (String name : List.of("1bad", "user", "operation", "time", "key_id"))
+        for (String name : List.of("1bad", "user", "operation", "tool", "time", "key_id"))
             assertThrows(IllegalArgumentException.class, () -> from(Map.of("BISCUIT_EXTRA_FACTS",
                     "[{\"name\":\"" + name + "\",\"values\":[\"x\"]}]")));
     }
